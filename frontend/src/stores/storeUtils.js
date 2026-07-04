@@ -4,7 +4,9 @@
  * parameter building, response parsing, and auth lifecycle are defined
  * exactly once.
  */
-import { watch } from 'vue';
+import { ref, watch } from 'vue';
+import { defineStore } from 'pinia';
+import api from '@/services/api';
 import { useAuthStore } from './auth';
 
 /**
@@ -71,4 +73,101 @@ export function applyListResponse(refs, content) {
     refs.totalCnt.value = content.total;
     refs.curPg.value    = content.page;
     refs.totalPgs.value = Math.max(1, Math.ceil(content.total / content.pageSize));
+}
+
+/**
+ * Extract the human-readable message from a standard API error response.
+ * The backend envelope puts it at data.outcome.message; data.message is
+ * kept as a fallback for non-envelope errors (e.g. proxies).
+ *
+ * @param {unknown} err       - axios error
+ * @param {string}  fallback  - message when the response carries none
+ * @returns {string}
+ */
+export function apiErrorMessage(err, fallback) {
+    return err?.response?.data?.outcome?.message
+        || err?.response?.data?.message
+        || fallback;
+}
+
+/**
+ * Factory for paginated list stores. Defines the standard contract that
+ * TableComponent consumes — query / curPg / totalPgs / totalCnt /
+ * loadingCnt / error / fieldsConfig / getAll — so list behaviour
+ * (pagination, search, future filters) is implemented exactly once.
+ *
+ * The query object drives fetching: any mutation (page, pageSize, q,
+ * or a future filter key) triggers a refetch via watchQuery. Keys with
+ * empty-string/null values are omitted from the request.
+ *
+ * @param {string} storeId - unique Pinia store id
+ * @param {object} options
+ * @param {string}   options.endpoint          - list endpoint, e.g. '/api/v1/orders'
+ * @param {string}   options.collectionKey     - key of the row array in the API response
+ *                                               content AND the name the rows are exposed
+ *                                               under on the store (e.g. store.orders)
+ * @param {object}   options.fieldsConfig      - column config consumed by TableComponent
+ * @param {() => object} [options.initialQuery] - factory for the initial query object
+ * @param {string}   [options.loadErrorMessage] - error shown when the list fetch fails
+ * @param {(ctx: object) => object} [options.extend]
+ *        Adds store-specific state/actions. Receives the base context
+ *        ({ rows, loadingCnt, error, totalCnt, totalPgs, curPg, query,
+ *        getAll, reset }); whatever it returns is merged into the store.
+ * @returns {import('pinia').StoreDefinition}
+ */
+export function createListStore(storeId, {
+    endpoint,
+    collectionKey,
+    fieldsConfig,
+    initialQuery = () => ({ page: 1, pageSize: 25, q: '' }),
+    loadErrorMessage = 'Failed to load records',
+    extend = null,
+}) {
+    return defineStore(storeId, () => {
+        const loadingCnt = ref(0);
+        const error      = ref('');
+        const rows       = ref([]);
+        const totalCnt   = ref(0);
+        const totalPgs   = ref(0);
+        const curPg      = ref(1);
+        const query      = ref(initialQuery());
+
+        function reset() {
+            rows.value     = [];
+            totalCnt.value = 0;
+            totalPgs.value = 0;
+            curPg.value    = 1;
+            query.value    = initialQuery();
+            error.value    = '';
+        }
+
+        function getAll() {
+            loadingCnt.value++;
+            error.value = '';
+            return api.get(endpoint + '?' + buildListParams(query.value))
+            .then(res => {
+                const content = res.data.content;
+                rows.value    = content[collectionKey];
+                applyListResponse({ totalCnt, curPg, totalPgs }, content);
+            })
+            .catch(err => {
+                error.value = apiErrorMessage(err, loadErrorMessage);
+                return Promise.reject(err);
+            })
+            .finally(() => { loadingCnt.value--; });
+        }
+
+        watchQuery(query, () => getAll().catch(() => {}));
+        watchAuthUser(null, reset);
+
+        const base = {
+            loadingCnt, error, totalCnt, totalPgs, curPg, query,
+            fieldsConfig, getAll, reset,
+            [collectionKey]: rows,
+        };
+        const extra = extend
+            ? extend({ ...base, rows })
+            : {};
+        return { ...base, ...extra };
+    });
 }

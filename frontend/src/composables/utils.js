@@ -34,10 +34,13 @@ export function debounce(func, timeout = 300) {
  */
 export function formatCell(value, fmt) {
     switch (fmt) {
+        case 'fixedNum1': return fixedNum(value, 1);
         case 'fixedNum2': return fixedNum(value);
         case 'fixedNum4': return fixedNum(value, 4);
         case 'date':      return value ? new Date(value).toLocaleDateString() : '—';
+        case 'datetime':  return value ? new Date(value).toLocaleString() : '—';
         case 'money':     return value != null ? fixedNum(value, 2) : '—';
+        case 'usd':       return value != null ? '$ ' + fixedNum(value, 2) : '—';
         case 'fallback':  return value || '—';
         default:          return value;
     }

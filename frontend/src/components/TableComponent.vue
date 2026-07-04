@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, useSlots } from 'vue';
+import { computed, ref, useSlots, watch } from 'vue';
 import PaginationBar from '@/components/PaginationBar.vue';
 import { useTableColumns } from '@/composables/useTableColumns';
 import { usePagination } from '@/composables/usePagination';
@@ -12,6 +12,15 @@ const props = defineProps({
     label:         { type: String,  default: 'Records Found' },
     selectable:    { type: String,  default: null },   // 'single' | 'multi' | null
     clickable:     { type: Boolean, default: false },  // show pointer cursor without selectable
+
+    // Renders the shared search box bound to store.query.q when set.
+    searchPlaceholder: { type: String, default: null },
+
+    // Row keys whose #detail slot row is rendered (parent-controlled expansion).
+    expandedKeys:      { type: Array, default: () => [] },
+
+    // Optional per-row class: (row) => string | object | array
+    rowClass:          { type: Function, default: null },
 });
 
 const emit = defineEmits(['row-click', 'update:selected']);
@@ -38,6 +47,19 @@ function onPageSize(size) {
     clearSelection();
     props.store.query.page     = 1;
     props.store.query.pageSize = size;
+}
+
+// ── Search (bound to store.query.q, applied on Enter or button click) ─────────
+
+const searchDraft = ref(props.store.query?.q ?? '');
+
+// Keep the draft in sync when the store query is reset externally (e.g. logout).
+watch(() => props.store.query?.q, (q) => { searchDraft.value = q ?? ''; });
+
+function onSearch() {
+    clearSelection();
+    props.store.query.q    = searchDraft.value;
+    props.store.query.page = 1;
 }
 
 // ── Selection state (Set of rowKey values for O(1) lookup) ───────────────────
@@ -87,9 +109,12 @@ function clearSelection() {
 
 const isLoading     = computed(() => props.store.loadingCnt > 0);
 const hasRowActions = computed(() => !!slots['row-actions']);
+const hasDetail     = computed(() => !!slots['detail']);
 const isMulti       = computed(() => props.selectable === 'multi');
 const isSelectable  = computed(() => props.selectable === 'single' || props.selectable === 'multi');
 const isClickable   = computed(() => isSelectable.value || props.clickable);
+
+const expandedSet   = computed(() => new Set(props.expandedKeys));
 
 const totalColCount = computed(() =>
     colCount.value + (isMulti.value ? 1 : 0) + (hasRowActions.value ? 1 : 0)
@@ -115,6 +140,15 @@ function onRowClick(row) {
             @goto="onGoto"
             @update:pageSize="onPageSize"
         >
+            <div v-if="searchPlaceholder" class="search-row">
+                <input
+                    v-model="searchDraft"
+                    type="text"
+                    :placeholder="searchPlaceholder"
+                    @keyup.enter="onSearch"
+                />
+                <button class="btn-search" @click="onSearch">Search</button>
+            </div>
             <slot name="filters" />
         </PaginationBar>
 
@@ -156,35 +190,42 @@ function onRowClick(row) {
                             <slot name="empty">No records found.</slot>
                         </td>
                     </tr>
-                    <tr
-                        v-for="row in rows" :key="row[rowKey]"
-                        :class="{
-                            'tc-row--selected':  selectedKeys.has(row[rowKey]),
-                            'tc-row--clickable': isClickable,
-                        }"
-                        @click="onRowClick(row)"
-                    >
-                        <td v-if="isMulti" class="tc-col--check" @click.stop>
-                            <input
-                                type="checkbox"
-                                :checked="selectedKeys.has(row[rowKey])"
-                                @change="toggleRow(row)"
-                            />
-                        </td>
-                        <td
-                            v-for="key in displayFields" :key="key"
-                            :class="fields_config[key]?.class"
-                            :title="fields_config[key]?.title ? String(row[key] ?? '') : undefined"
+                    <template v-for="row in rows" :key="row[rowKey]">
+                        <tr
+                            class="tc-row"
+                            :class="[rowClass ? rowClass(row) : null, {
+                                'tc-row--selected':  selectedKeys.has(row[rowKey]),
+                                'tc-row--clickable': isClickable,
+                            }]"
+                            @click="onRowClick(row)"
                         >
-                            <template v-if="$slots['cell-' + key]">
-                                <slot :name="'cell-' + key" :row="row" :value="row[key]" />
-                            </template>
-                            <template v-else>{{ cellValue(row, key) }}</template>
-                        </td>
-                        <td v-if="hasRowActions" class="tc-col--actions" @click.stop>
-                            <slot name="row-actions" :row="row" />
-                        </td>
-                    </tr>
+                            <td v-if="isMulti" class="tc-col--check" @click.stop>
+                                <input
+                                    type="checkbox"
+                                    :checked="selectedKeys.has(row[rowKey])"
+                                    @change="toggleRow(row)"
+                                />
+                            </td>
+                            <td
+                                v-for="key in displayFields" :key="key"
+                                :class="fields_config[key]?.class"
+                                :title="fields_config[key]?.title ? String(row[key] ?? '') : undefined"
+                            >
+                                <template v-if="$slots['cell-' + key]">
+                                    <slot :name="'cell-' + key" :row="row" :value="row[key]" />
+                                </template>
+                                <template v-else>{{ cellValue(row, key) }}</template>
+                            </td>
+                            <td v-if="hasRowActions" class="tc-col--actions" @click.stop>
+                                <slot name="row-actions" :row="row" />
+                            </td>
+                        </tr>
+                        <tr v-if="hasDetail && expandedSet.has(row[rowKey])" class="tc-detail">
+                            <td :colspan="totalColCount">
+                                <slot name="detail" :row="row" />
+                            </td>
+                        </tr>
+                    </template>
                 </tbody>
             </table>
         </div>
@@ -204,6 +245,19 @@ function onRowClick(row) {
     flex: 1;
     min-height: 0;
     position: relative;
+}
+
+// ── Search box (shared by every list view) ────────────────────────────────────
+
+.search-row {
+    display: flex; gap: 0.5rem; align-items: center;
+    input { padding: 0.35rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; width: 260px; }
+}
+
+.btn-search {
+    padding: 0.35rem 0.9rem; background: #5a3e8a; color: #fff;
+    border: none; border-radius: 4px; cursor: pointer;
+    &:hover { background: #7a5ea8; }
 }
 
 // ── Bulk action bar ───────────────────────────────────────────────────────────
@@ -273,6 +327,13 @@ function onRowClick(row) {
         td {
             padding: 0.35rem 0.6rem;
             border-bottom: 1px solid #eee;
+        }
+
+        &:last-child td { border-bottom: none; }
+    }
+
+    tbody tr.tc-row {
+        td {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -283,8 +344,11 @@ function onRowClick(row) {
         &:hover td { background: rgba(96, 176, 250, 0.15); }
 
         &.tc-row--selected td { background: rgba(90, 62, 138, 0.1); }
+    }
 
-        &:last-child td { border-bottom: none; }
+    tbody tr.tc-detail td {
+        background: var(--color-surface-muted);
+        cursor: default;
     }
 }
 

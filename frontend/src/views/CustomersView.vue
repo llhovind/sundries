@@ -5,7 +5,6 @@ import TableComponent from '@/components/TableComponent.vue';
 
 const store    = useCustomersStore();
 onMounted(() => store.getAll().catch(() => {}));
-const searchQ  = ref('');
 const selected = ref(null);
 
 const displayFields = ['id', 'name', 'email', 'city', 'state', 'phone'];
@@ -20,8 +19,6 @@ watch(selectedRows, async (rows) => {
         selected.value = rows[0]; // fallback to list data
     }
 });
-
-function onSearch() { store.query.q = searchQ.value; store.query.page = 1; }
 
 function fmtDate(val) { return val ? new Date(val).toLocaleDateString() : '—'; }
 </script>
@@ -43,15 +40,9 @@ function fmtDate(val) { return val ? new Date(val).toLocaleDateString() : '—';
           :displayFields="displayFields"
           selectable="single"
           v-model:selected="selectedRows"
+          searchPlaceholder="Search name or email…"
           label="Customers Found"
-        >
-          <template #filters>
-            <div class="search-row">
-              <input v-model="searchQ" type="text" placeholder="Search name or email…" @keyup.enter="onSearch" />
-              <button class="btn-search" @click="onSearch">Search</button>
-            </div>
-          </template>
-        </TableComponent>
+        />
       </div>
 
       <!-- Detail panel -->
@@ -86,10 +77,6 @@ function fmtDate(val) { return val ? new Date(val).toLocaleDateString() : '—';
   display: flex; align-items: center; margin-bottom: 0.75rem;
   h2 { margin: 0; color: #3a2060; }
 }
-.search-row { display: flex; gap: 0.5rem; align-items: center;
-  input { padding: 0.35rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; width: 260px; }
-}
-.btn-search { padding: 0.35rem 0.9rem; background: #5a3e8a; color: #fff; border: none; border-radius: 4px; cursor: pointer; &:hover { background: #7a5ea8; } }
 .error { color: #c0392b; margin-bottom: 0.5rem; font-size: 0.9rem; }
 
 .split-pane { display: flex; gap: 1rem; flex: 1; min-height: 0; }

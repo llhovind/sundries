@@ -1,154 +1,93 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
-import api from '@/services/api';
+import { ref, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useUsersStore } from '@/stores/users';
-import { usePagination } from '@/composables/usePagination';
-import PaginationBar from '@/components/PaginationBar.vue';
+import { apiErrorMessage } from '@/stores/storeUtils';
+import TableComponent from '@/components/TableComponent.vue';
 
-const auth      = useAuthStore();
-const store     = useUsersStore();
-const errorMsg  = ref('');
-const searchQ   = ref('');
-const pageSize  = ref(25);
+const auth  = useAuthStore();
+const store = useUsersStore();
+onMounted(() => { store.getAll().catch(() => {}); store.loadRoles(); });
 
-const totalPgs = computed(() => store.totalPgs);
-const { pgArry } = usePagination(computed(() => store.curPg), totalPgs);
+const displayFields = ['id', 'username', 'email', 'role', 'status', '_create_ts'];
 
-function fmtDate(val) { return val ? new Date(val).toLocaleDateString() : '—'; }
+const mutationError = ref('');
 
-async function load(pg = store.curPg) {
-    errorMsg.value = '';
-    try {
-        await store.getUsers(pg, searchQ.value, pageSize.value);
-    } catch (err) {
-        errorMsg.value = err.response?.data?.message || 'Failed to load users';
-    }
-}
-
-function onSearch()       { load(1); }
-function onGoto(pg)       { load(pg); }
-function onPageSize(size) { pageSize.value = size; load(1); }
+const isSelf   = (user) => user.id === auth.user?.id;
+const rowClass = (user) => ({ inactive: user.status === 'inactive', self: isSelf(user) });
 
 async function setRole(user, role) {
     if (store.saving) return;
+    mutationError.value = '';
     try {
         await store.updateUser(user.id, { role });
     } catch (err) {
-        errorMsg.value = err.response?.data?.message || 'Failed to update role';
+        mutationError.value = apiErrorMessage(err, 'Failed to update role');
     }
 }
 
 async function toggleStatus(user) {
     if (store.saving) return;
+    mutationError.value = '';
     const newStatus = user.status === 'active' ? 'inactive' : 'active';
     try {
         await store.updateUser(user.id, { status: newStatus });
     } catch (err) {
-        errorMsg.value = err.response?.data?.message || 'Failed to update status';
+        mutationError.value = apiErrorMessage(err, 'Failed to update status');
     }
 }
-
-async function deactivate(user) {
-    if (!confirm(`Deactivate "${user.username}"? They will not be able to log in.`)) return;
-    try {
-        await store.deactivateUser(user.id);
-    } catch (err) {
-        errorMsg.value = err.response?.data?.message || 'Failed to deactivate user';
-    }
-}
-
-const isSelf = (user) => user.id === auth.user?.id;
-
-// Roles are data, not a hardcoded list — the RBAC tables define them.
-const roles = ref([]);
-async function loadRoles() {
-    try {
-        const res = await api.get('/api/v1/users/roles');
-        roles.value = res.data.content.roles;
-    } catch {
-        roles.value = [{ code: 'customer' }, { code: 'admin' }];   // safe fallback
-    }
-}
-
-onMounted(() => { load(); loadRoles(); });
 </script>
 
 <template>
   <div class="view">
     <div class="view-header">
       <h2>Users</h2>
-      <div class="search-row">
-        <input v-model="searchQ" type="text" placeholder="Search username or email…" @keyup.enter="onSearch" />
-        <button class="btn-search" @click="onSearch">Search</button>
-      </div>
     </div>
 
-    <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
+    <div v-if="store.error || mutationError" class="error">{{ store.error || mutationError }}</div>
 
-    <PaginationBar
-      :curPage="store.curPg"
-      :totalPages="store.totalPgs"
-      :totalCnt="store.totalCnt"
-      :pageSize="pageSize"
-      :pgArry="pgArry"
+    <TableComponent
+      :store="store"
+      :rows="store.users"
+      :displayFields="displayFields"
+      :rowClass="rowClass"
+      searchPlaceholder="Search username or email…"
       label="Users Found"
-      @goto="onGoto"
-      @update:pageSize="onPageSize"
-    />
+    >
+      <template #cell-username="{ row }">
+        {{ row.username }}
+        <span v-if="isSelf(row)" class="you-badge">you</span>
+      </template>
 
-    <div v-if="store.loadingCnt > 0" class="info">Loading…</div>
-    <table v-else class="data-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Username</th>
-          <th>Email</th>
-          <th>Role</th>
-          <th>Status</th>
-          <th>Created</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="u in store.users" :key="u.id" :class="{ inactive: u.status === 'inactive', self: isSelf(u) }">
-          <td>{{ u.id }}</td>
-          <td>
-            {{ u.username }}
-            <span v-if="isSelf(u)" class="you-badge">you</span>
-          </td>
-          <td>{{ u.email || '—' }}</td>
-          <td>
-            <select
-              :value="u.role"
-              :disabled="isSelf(u) || store.saving === u.id"
-              @change="setRole(u, $event.target.value)"
-              class="role-select"
-              :class="u.role">
-              <option v-for="r in roles" :key="r.code" :value="r.code">{{ r.code }}</option>
-            </select>
-          </td>
-          <td>
-            <span class="status-pill" :class="u.status">{{ u.status }}</span>
-          </td>
-          <td>{{ fmtDate(u._create_ts) }}</td>
-          <td class="actions">
-            <button
-              v-if="!isSelf(u)"
-              class="btn-toggle"
-              :class="u.status === 'active' ? 'btn-deactivate' : 'btn-activate'"
-              :disabled="store.saving === u.id"
-              @click="toggleStatus(u)">
-              {{ u.status === 'active' ? 'Deactivate' : 'Activate' }}
-            </button>
-            <span v-else class="self-note">—</span>
-          </td>
-        </tr>
-        <tr v-if="!store.users.length">
-          <td colspan="7" class="empty">No users found.</td>
-        </tr>
-      </tbody>
-    </table>
+      <template #cell-role="{ row }">
+        <select
+          :value="row.role"
+          :disabled="isSelf(row) || store.saving === row.id"
+          @change="setRole(row, $event.target.value)"
+          class="role-select"
+          :class="row.role">
+          <option v-for="r in store.roles" :key="r.code" :value="r.code">{{ r.code }}</option>
+        </select>
+      </template>
+
+      <template #cell-status="{ row }">
+        <span class="status-pill" :class="row.status">{{ row.status }}</span>
+      </template>
+
+      <template #row-actions="{ row }">
+        <button
+          v-if="!isSelf(row)"
+          class="btn-toggle"
+          :class="row.status === 'active' ? 'btn-deactivate' : 'btn-activate'"
+          :disabled="store.saving === row.id"
+          @click="toggleStatus(row)">
+          {{ row.status === 'active' ? 'Deactivate' : 'Activate' }}
+        </button>
+        <span v-else class="self-note">—</span>
+      </template>
+
+      <template #empty>No users found.</template>
+    </TableComponent>
   </div>
 </template>
 
@@ -156,29 +95,14 @@ onMounted(() => { load(); loadRoles(); });
 .view { display: flex; flex-direction: column; height: 100%; }
 
 .view-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;
+  display: flex; align-items: center; margin-bottom: 0.75rem;
   h2 { margin: 0; color: #3a2060; }
 }
 
-.search-row {
-  display: flex; gap: 0.5rem;
-  input { padding: 0.35rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; width: 260px; }
-}
+.error { color: #c0392b; margin-bottom: 0.5rem; font-size: 0.9rem; }
 
-.btn-search { padding: 0.35rem 0.9rem; background: #5a3e8a; color: #fff; border: none; border-radius: 4px; cursor: pointer; &:hover { background: #7a5ea8; } }
-.error      { color: #c0392b; margin-bottom: 0.5rem; font-size: 0.9rem; }
-.info       { color: #666; padding: 1rem; }
-
-.data-table {
-  width: 100%; border-collapse: collapse; font-size: 0.9rem;
-  th { background: royalblue; color: #fff; text-align: left; padding: 0.4rem 0.6rem; position: sticky; top: 0; }
-  td { padding: 0.35rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: middle; }
-  tr {
-    &.inactive td { color: #bbb; }
-    &.self td { background: rgba(90, 62, 138, 0.04); }
-  }
-  .empty { text-align: center; color: #999; padding: 1rem; }
-}
+:deep(tr.inactive td) { color: #bbb; }
+:deep(tr.self td)     { background: rgba(90, 62, 138, 0.04); }
 
 .you-badge {
   display: inline-block; font-size: 0.65rem; background: #5a3e8a; color: #fff;
@@ -199,8 +123,6 @@ onMounted(() => { load(); loadRoles(); });
   &.active   { background: #d4edda; color: #155724; }
   &.inactive { background: #f8d7da; color: #721c24; }
 }
-
-.actions { white-space: nowrap; }
 
 .btn-toggle {
   padding: 0.2rem 0.65rem; border: none; border-radius: 4px;
