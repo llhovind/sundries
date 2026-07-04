@@ -5,7 +5,7 @@ const router            = express.Router();
 const requirePermission = require('../middleware/requirePermission');
 const CategoriesCntlr   = require('../controllers/CategoriesCntlr')();
 
-// Reads stay open to any authenticated user — the storefront browses these.
+// Reads are public — the storefront (including anonymous guests) browses these.
 router.get('/',       CategoriesCntlr.find);
 router.get('/:id',    CategoriesCntlr.findOne);
 router.post('/',      requirePermission('catalog:write'), CategoriesCntlr.create);

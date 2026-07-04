@@ -28,7 +28,10 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 10_000,
       cwd: '../backend',
-      env: { NODE_ENV: 'test' },
+      // noop mail: e2e runs must never email real inboxes. Only effective
+      // when Playwright boots the backend itself — a reused dev server
+      // (reuseExistingServer) keeps whatever mail provider it started with.
+      env: { NODE_ENV: 'test', MAIL_PROVIDER: 'noop' },
     },
     {
       command: 'npm run dev',

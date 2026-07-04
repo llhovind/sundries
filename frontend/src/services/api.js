@@ -34,8 +34,10 @@ api.interceptors.response.use(
             err.response.data.message = err.response.data.outcome.message;
         }
 
+        // Anonymous guests have no session to refresh — a 401 is simply the
+        // answer, not a trigger for the refresh-then-login flow.
         const original = err.config;
-        if (err.response?.status === 401 && !original._retry) {
+        if (err.response?.status === 401 && !original._retry && _accessToken) {
             original._retry = true;
 
             if (!_refreshPromise) {

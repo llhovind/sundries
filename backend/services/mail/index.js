@@ -12,6 +12,7 @@ const { DB: db } = require('../../common/db');
 const ADAPTERS = {
     get smtp() { return require('./smtpAdapter'); },
     get ses()  { return require('./sesAdapter'); },
+    get noop() { return require('./noopAdapter'); },   // tests / mail-less installs
 };
 
 const SETTING_CACHE_MS = 60000;

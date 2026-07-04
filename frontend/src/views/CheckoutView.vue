@@ -4,9 +4,15 @@ import { useRouter } from 'vue-router';
 import api from '@/services/api';
 import { fixedNum } from '@/composables/utils';
 import { useCartStore } from '@/stores/cart';
+import { useAuthStore } from '@/stores/auth';
 
 const router = useRouter();
 const cart   = useCartStore();
+const auth   = useAuthStore();
+
+const isGuest    = computed(() => !auth.isLoggedIn());
+const guestEmail = ref('');
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const step      = ref('details');   // details → pay → done
 const error     = ref('');
@@ -21,9 +27,11 @@ const paying    = ref(false);
 const shipTo = reactive({ name: '', address: '', city: '', state: '', zip: '', country: 'US', phone: '' });
 
 const canPlace = computed(() =>
-    cart.itemCount > 0 && shipTo.name && shipTo.address && shipTo.city && shipTo.zip);
+    cart.itemCount > 0 && shipTo.name && shipTo.address && shipTo.city && shipTo.zip
+    && (!isGuest.value || EMAIL_REGEX.test(guestEmail.value)));
 
 onMounted(async () => {
+    if (isGuest.value) return;   // no profile to prefill — guest enters details
     try {
         const res = await api.get('/api/v1/customers/me');
         const me = res.data.content.customer;
@@ -56,7 +64,18 @@ async function placeOrder() {
     try {
         const body = { shipTo: { ...shipTo }, backorders: { ...backorders } };
         if (promoCode.value) body.promoCode = promoCode.value;
-        const res = await api.post('/api/v1/checkout', body);
+
+        // Guests have no server cart: send the local lines inline to the
+        // public guest endpoint, which creates an implicit account by email.
+        let res;
+        if (isGuest.value) {
+            body.email = guestEmail.value;
+            body.name  = shipTo.name;
+            body.items = (cart.cart?.items ?? []).map(i => ({ variant_no: i.variant_no, qty: i.qty }));
+            res = await api.post('/api/v1/checkout/guest', body);
+        } else {
+            res = await api.post('/api/v1/checkout', body);
+        }
         order.value = res.data.content.order;
         failures.value = [];
         step.value = 'pay';
@@ -90,7 +109,8 @@ async function pay(outcome) {
             { intent_ref: order.value.payment.intent_ref, outcome });
         if (outcome === 'authorized') {
             step.value = 'done';
-            cart.fetchCart().catch(() => {});
+            if (isGuest.value) cart.clearGuestCart();
+            else cart.fetchCart().catch(() => {});
         } else {
             error.value = 'Payment failed (simulated). The order was not completed and stock was released.';
             step.value = 'details';
@@ -127,6 +147,16 @@ async function pay(outcome) {
 
       <div class="layout">
         <div class="card">
+          <template v-if="isGuest">
+            <h3>Contact</h3>
+            <div class="form-grid guest-contact">
+              <label>Email <input v-model.trim="guestEmail" class="input" type="email"
+                                  placeholder="you@example.com" autocomplete="email" /></label>
+            </div>
+            <p class="muted small">Your order confirmation goes here — no account needed.
+              Already have an account? <router-link to="/login">Log in</router-link> to keep your order history in one place.</p>
+          </template>
+
           <h3>Shipping address</h3>
           <div class="form-grid">
             <label>Name <input v-model="shipTo.name" class="input" type="text" /></label>
@@ -195,8 +225,13 @@ async function pay(outcome) {
       <div class="card done-card">
         <h3>✓ Payment confirmed</h3>
         <p>Order <strong>#{{ order.ord_no }}</strong> is paid. A confirmation email is on its way.</p>
+        <p v-if="isGuest" class="muted small">
+          To check on your order later, log in with <strong>{{ guestEmail }}</strong> —
+          we'll email you a one-time code, no password needed.
+        </p>
         <div class="pay-actions">
-          <button class="btn btn-primary" @click="router.push('/orders')">View my orders</button>
+          <button v-if="!isGuest" class="btn btn-primary" @click="router.push('/orders')">View my orders</button>
+          <button v-else class="btn btn-primary" @click="router.push('/login')">Log in to track it</button>
           <button class="btn" @click="router.push('/shop')">Keep shopping</button>
         </div>
       </div>
@@ -213,6 +248,7 @@ async function pay(outcome) {
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 .form-grid label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem; color: var(--color-text-muted); }
 .form-grid label:first-child, .form-grid label:nth-child(2) { grid-column: 1 / -1; }
+.guest-contact { margin-bottom: 0.4rem; }
 
 .summary-lines { list-style: none; padding: 0; margin-bottom: 0.6rem; }
 .summary-lines li { display: flex; justify-content: space-between; font-size: 0.88rem; padding: 0.25rem 0; border-bottom: 1px solid var(--color-border); }

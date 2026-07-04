@@ -54,7 +54,18 @@ async function addToCart() {
     if (!currentVariant.value) return;
     added.value = false;
     try {
-        await cart.addItem(currentVariant.value.variant_no, Number(qty.value));
+        // Variant details ride along so a guest (local) cart can render the
+        // line without another API call; the server cart ignores them.
+        const v = currentVariant.value;
+        await cart.addItem(v.variant_no, Number(qty.value), {
+            name:          product.value.name,
+            sku:           v.sku,
+            unit_price:    v.price,
+            sell_method:   product.value.sell_method,
+            base_uom:      product.value.base_uom,
+            min_cut_qty:   product.value.min_cut_qty,
+            primary_image: v.primary_image || product.value.primary_image,
+        });
         added.value = true;
         setTimeout(() => { added.value = false; }, 2000);
     } catch { /* error surfaced via cart.error */ }

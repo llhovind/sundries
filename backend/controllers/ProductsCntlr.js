@@ -8,8 +8,9 @@ const ProductsCntlr = function () {
 
     return { list, findOne, create, update, upsertVariant, setOptions };
 
-    /** Staff (catalog:write) see inactive/draft products; shoppers do not. */
+    /** Staff (catalog:write) see inactive/draft products; shoppers and anonymous guests do not. */
     async function canSeeInactive(req) {
+        if (!req.user) return false;
         if (!Array.isArray(req.user.perms)) {
             req.user.perms = await Rbac.getPermissionsForUser(req.user.id);
         }

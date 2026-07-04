@@ -119,8 +119,14 @@ describe('given catalog products when searched through the port then Postgres FT
 
 describe('given provider registries when resolving then env wins and unknowns fail loud', () => {
 
-    test('given defaults then postgres search and smtp mail are selected', async () => {
+    // Restore after each test — the test env pins MAIL_PROVIDER=noop so
+    // suites that place paid orders never email real inboxes.
+    const originalMailProvider = process.env.MAIL_PROVIDER;
+    afterEach(() => { process.env.MAIL_PROVIDER = originalMailProvider; });
+
+    test('given no provider in the environment then postgres search and smtp mail are the fallbacks', async () => {
         expect((await getSearchProvider()).provider).toBe('postgres');
+        delete process.env.MAIL_PROVIDER;
         expect((await getMailProvider()).provider).toBe('smtp');
     });
 
@@ -131,7 +137,6 @@ describe('given provider registries when resolving then env wins and unknowns fa
 
         process.env.MAIL_PROVIDER = 'pigeon';
         await expect(getMailProvider()).rejects.toThrow(/Unknown mail provider/);
-        delete process.env.MAIL_PROVIDER;
     });
 });
 

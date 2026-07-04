@@ -6,6 +6,7 @@ var logger = require('morgan');
 const multer = require('multer');
 const responseHandler = require('./common/responseHandlers');
 const auth = require('./middleware/auth');
+const optionalAuth = require('./middleware/optionalAuth');
 
 var app = express();
 
@@ -28,18 +29,21 @@ app.use('/api/v1/auth', require('./routes/auth'));
 app.use('/api/v1/checkout/guest', require('./routes/checkoutGuest'));
 app.use('/api/v1/payments/fake',  require('./routes/paymentsFake'));   // local demo only
 
+// Storefront routes — anonymous browsing allowed; writes inside each router
+// are gated by requirePermission, which rejects anonymous callers.
+app.use('/api/v1/products',       optionalAuth, require('./routes/products'));
+app.use('/api/v1/categories',     optionalAuth, require('./routes/categories'));
+app.use('/api/v1/search',         optionalAuth, require('./routes/search'));
+app.use('/api/v1/promotions',     optionalAuth, require('./routes/promotions'));
+
 // Protected routes
-app.use('/api/v1/products',       auth, require('./routes/products'));
 app.use('/api/v1/inventory',      auth, require('./routes/inventory'));
-app.use('/api/v1/categories',     auth, require('./routes/categories'));
 app.use('/api/v1/vendors',        auth, require('./routes/vendors'));
 app.use('/api/v1/customers',      auth, require('./routes/customers'));
 app.use('/api/v1/users',          auth, require('./routes/users'));
 app.use('/api/v1/cart',           auth, require('./routes/carts'));
 app.use('/api/v1/checkout',       auth, require('./routes/checkout'));
-app.use('/api/v1/search',         auth, require('./routes/search'));
 app.use('/api/v1/reports',        auth, require('./routes/reports'));
-app.use('/api/v1/promotions',     auth, require('./routes/promotions'));
 app.use('/api/v1/rmas',           auth, require('./routes/rmas'));
 app.use('/api/v1/compliance',     auth, require('./routes/compliance'));
 app.use('/api/v1/orders',         auth, require('./routes/orders'));

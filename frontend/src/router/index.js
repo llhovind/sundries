@@ -26,10 +26,10 @@ const router = createRouter({
       name: 'home',
       component: HomeView,
       children: [
-        // Storefront
-        { path: 'shop',                 name: 'shop',         component: ShopView },
-        { path: 'shop/:product_no',     name: 'product',      component: ProductDetailView },
-        { path: 'checkout',             name: 'checkout',     component: CheckoutView },
+        // Storefront — open to anonymous guests (guest cart + guest checkout)
+        { path: 'shop',                 name: 'shop',         component: ShopView,          meta: { guestOk: true } },
+        { path: 'shop/:product_no',     name: 'product',      component: ProductDetailView, meta: { guestOk: true } },
+        { path: 'checkout',             name: 'checkout',     component: CheckoutView,      meta: { guestOk: true } },
         { path: 'orders',               name: 'orders',       component: MyOrdersView },
 
         // Staff — gated by permission codes from the JWT
@@ -73,7 +73,7 @@ router.beforeEach((to) => {
     return true;
   }
   if (!auth.isLoggedIn()) {
-    return '/login';
+    return to.meta.guestOk ? true : '/login';
   }
   if (to.meta.requiresPerm && !auth.hasPerm(...to.meta.requiresPerm)) {
     return '/shop';

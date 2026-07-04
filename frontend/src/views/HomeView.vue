@@ -26,7 +26,7 @@ async function logout() {
     <span class="brand">Storefront</span>
     <nav>
       <router-link to="/shop">Shop</router-link>
-      <router-link v-if="isShopper" to="/orders">My Orders</router-link>
+      <router-link v-if="isShopper && auth.isLoggedIn()" to="/orders">My Orders</router-link>
 
       <span v-if="auth.isStaff()" class="nav-sep" />
       <router-link v-if="auth.hasPerm('orders:read', 'orders:fulfill')" to="/admin/orders">Orders</router-link>
@@ -43,6 +43,9 @@ async function logout() {
       <span v-else class="username">{{ displayName }}</span>
       <span v-if="auth.isStaff()" class="pill accent">{{ auth.user.role }}</span>
       <button class="btn logout-btn" @click="logout">Logout</button>
+    </span>
+    <span v-else class="user-info">
+      <button class="btn logout-btn" @click="router.push('/login')">Log in</button>
     </span>
     <ProfileModal v-if="showProfile" @close="showProfile = false" />
   </header>

@@ -5,8 +5,8 @@ const router            = express.Router();
 const requirePermission = require('../middleware/requirePermission');
 const ProductsCntlr     = require('../controllers/ProductsCntlr')();
 
-// Reads: any authenticated user (the storefront); staff additionally see
-// inactive/draft products (decided in the controller via catalog:write).
+// Reads: public — anonymous guests browse the storefront; staff additionally
+// see inactive/draft products (decided in the controller via catalog:write).
 router.get('/',                        ProductsCntlr.list);
 router.get('/:product_no',             ProductsCntlr.findOne);
 

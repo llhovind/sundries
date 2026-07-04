@@ -11,6 +11,11 @@
     "setup": "node db/migrate.js && node db/bootstrap.js",
     "test": "jest --testTimeout=15000 --forceExit"
   },
+  "jest": {
+    "setupFiles": [
+      "<rootDir>/tests/setupEnv.js"
+    ]
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cookie-parser": "~1.4.4",
