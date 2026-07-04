@@ -1,0 +1,273 @@
+'use strict';
+
+const { DB: db, withTransaction } = require('../common/db');
+const InventoryTransactions = require('../models/inventoryTransactions');
+
+const DEFAULT_RESERVATION_TTL_MINUTES = 15;
+
+/**
+ * Error thrown when one or more order lines cannot be reserved.
+ * Carries per-line detail so the checkout flow can revert one step and let
+ * the customer choose remove / backorder / notify-when-available per line.
+ */
+class ReservationError extends Error {
+    /** @param {Array<{variant_no:number, qty:number, qty_available:number}>} failures */
+    constructor(failures) {
+        super('Insufficient stock for one or more items');
+        this.name     = 'ReservationError';
+        this.status   = 409;
+        this.failures = failures;
+    }
+}
+
+/**
+ * InventoryService
+ *
+ * Orchestrates inventory workflows on top of database-enforced invariants:
+ *   - balances/cost-layers are maintained by triggers on every ledger insert
+ *   - reservation math runs in DB functions (fn_allocate_and_reserve etc.)
+ *     so any number of API instances stay consistent
+ *
+ * Ordering rule (enforced by the on_hand >= reserved CHECK): whenever a
+ * reservation is consumed and stock issued in the same transaction, the
+ * reservation must be consumed BEFORE the OUT ledger row is inserted.
+ */
+const InventoryService = (function () {
+
+    return {
+        ReservationError,
+        receiveStock,
+        writeOff,
+        adjust,
+        reserveForOrder,
+        releaseOrderReservations,
+        consumeOrderReservations,
+        expireReservations,
+    };
+
+    // ── Receipts & adjustments ─────────────────────────────────────────────
+
+    /**
+     * Receives stock (purchase receipt or manual receive). unit_cost is the
+     * landed cost per base UOM and seeds a FIFO layer.
+     */
+    function receiveStock({ variantNo, warehouseNo, qty, unitCost,
+                            enteredQty, enteredUom, lnkTable, lnkId, lnNo, notes }, userId, client) {
+        if (!(qty > 0)) return Promise.reject(new Error('receiveStock qty must be positive'));
+        return InventoryTransactions.create({
+            _trn_type: 'IN',
+            _variant_no: variantNo,
+            _warehouse_no: warehouseNo,
+            qty,
+            unit_cost: unitCost,
+            entered_qty: enteredQty,
+            entered_uom: enteredUom,
+            _lnk_table: lnkTable,
+            _lnk_id: lnkId,
+            _ln_no: lnNo,
+            notes,
+        }, userId, client);
+    }
+
+    /**
+     * Writes stock off (remnants of measured goods, damage, shrinkage).
+     * qty is entered positive; recorded as a negative ADJ. The FIFO trigger
+     * stamps the true cost so write-offs appear in COGS/shrinkage reports.
+     */
+    function writeOff({ variantNo, warehouseNo, qty, reasonCode = 'remnant', notes }, userId, client) {
+        if (!(qty > 0)) return Promise.reject(new Error('writeOff qty must be positive'));
+        return InventoryTransactions.create({
+            _trn_type: 'ADJ',
+            _variant_no: variantNo,
+            _warehouse_no: warehouseNo,
+            qty: -qty,
+            reason_code: reasonCode,
+            notes,
+        }, userId, client);
+    }
+
+    /**
+     * Signed count adjustment. Positive adjustments (found stock) require a
+     * unitCost to value the new FIFO layer.
+     */
+    function adjust({ variantNo, warehouseNo, qty, unitCost, reasonCode = 'count', notes }, userId, client) {
+        return InventoryTransactions.create({
+            _trn_type: 'ADJ',
+            _variant_no: variantNo,
+            _warehouse_no: warehouseNo,
+            qty,
+            unit_cost: qty > 0 ? unitCost : null,
+            reason_code: reasonCode,
+            notes,
+        }, userId, client);
+    }
+
+    // ── Reservations (Place Order → payment confirmation window) ───────────
+
+    /**
+     * Reserves stock for every line of an order, all-or-nothing.
+     *
+     * Allocation walks standard warehouses in priority order inside
+     * fn_allocate_and_reserve (no split shipments). On success each order
+     * line is marked 'reserved' and stamped with its warehouse. On any
+     * failure the whole transaction rolls back and a ReservationError is
+     * thrown carrying {variant_no, qty, qty_available} per failing line so
+     * the checkout can revert one step and prompt the customer.
+     *
+     * @param {number} ordNo
+     * @param {Array<{orderLineId:number, variantNo:number, qty:number}>} lines
+     * @param {number} userId
+     * @param {number} [ttlMinutes]
+     * @param {object} [txClient] - pg client to join a caller-managed transaction
+     *                              (checkout creates order + reservations atomically)
+     * @returns {Promise<Array<{reservation_no:number, variant_no:number, warehouse_no:number, qty:number, expires_at:Date}>>}
+     */
+    function reserveForOrder(ordNo, lines, userId, ttlMinutes = DEFAULT_RESERVATION_TTL_MINUTES, txClient = null) {
+        if (!lines || !lines.length) return Promise.reject(new Error('No lines to reserve'));
+
+        const run = async (client) => {
+            const reservations = [];
+            const failures     = [];
+
+            for (const line of lines) {
+                const alloc = await client.query(
+                    'SELECT fn_allocate_and_reserve($1, $2) AS warehouse_no',
+                    [line.variantNo, line.qty]
+                );
+                const warehouseNo = alloc.rows[0].warehouse_no;
+
+                if (warehouseNo == null) {
+                    failures.push({ variantNo: line.variantNo, qty: line.qty });
+                    continue;   // keep collecting so the customer sees every problem at once
+                }
+
+                const res = await client.query(
+                    `INSERT INTO inventory_reservations
+                        (_ord_no, _variant_no, _warehouse_no, qty, expires_at, _create_user_id)
+                     VALUES ($1, $2, $3, $4, NOW() + ($5 || ' minutes')::INTERVAL, $6)
+                     RETURNING reservation_no, _variant_no AS variant_no,
+                               _warehouse_no AS warehouse_no, qty, expires_at`,
+                    [ordNo, line.variantNo, warehouseNo, line.qty, ttlMinutes, userId]
+                );
+
+                if (line.orderLineId) {
+                    await client.query(
+                        `UPDATE order_lines
+                         SET fulfillment_status = 'reserved', _warehouse_no = $2
+                         WHERE id = $1`,
+                        [line.orderLineId, res.rows[0].warehouse_no]
+                    );
+                }
+                reservations.push(res.rows[0]);
+            }
+
+            if (failures.length) {
+                // Enrich failures with current availability, then roll back everything.
+                const avail = await client.query(
+                    `SELECT b._variant_no, SUM(b.qty_on_hand - b.qty_reserved) AS qty_available
+                     FROM inventory_balances b
+                     JOIN warehouses w ON w.warehouse_no = b._warehouse_no
+                     WHERE b._variant_no = ANY($1) AND w.wh_type = 'standard' AND w.status = 'active'
+                     GROUP BY b._variant_no`,
+                    [failures.map(f => f.variantNo)]
+                );
+                const availMap = new Map(avail.rows.map(r => [Number(r._variant_no), Number(r.qty_available)]));
+                // pg returns BIGINT columns as strings — normalize before lookup
+                throw new ReservationError(failures.map(f => ({
+                    variant_no:    Number(f.variantNo),
+                    qty:           f.qty,
+                    qty_available: availMap.get(Number(f.variantNo)) || 0,
+                })));
+            }
+
+            return reservations;
+        };
+
+        return txClient ? run(txClient) : withTransaction(run);
+    }
+
+    /**
+     * Releases every active reservation on an order (payment cancelled or
+     * failed) and returns affected order lines to 'pending'. Idempotent.
+     */
+    function releaseOrderReservations(ordNo, txClient = null) {
+        const run = async (client) => {
+            const res = await client.query(
+                `SELECT reservation_no FROM inventory_reservations
+                 WHERE _ord_no = $1 AND status = 'active'
+                 FOR UPDATE SKIP LOCKED`,
+                [ordNo]
+            );
+            for (const row of res.rows) {
+                await client.query('SELECT fn_release_reservation($1, $2)', [row.reservation_no, 'released']);
+            }
+            await client.query(
+                `UPDATE order_lines SET fulfillment_status = 'pending', _warehouse_no = NULL
+                 WHERE _ord_no = $1 AND fulfillment_status = 'reserved'`,
+                [ordNo]
+            );
+            return res.rows.length;
+        };
+        return txClient ? run(txClient) : withTransaction(run);
+    }
+
+    /**
+     * Converts an order's active reservations into stock issues on payment
+     * confirmation: each reservation is consumed, then a matching OUT ledger
+     * row (FIFO-costed by trigger, selling price from the order line) is
+     * written — one transaction for the whole order.
+     */
+    function consumeOrderReservations(ordNo, userId, txClient = null) {
+        const run = async (client) => {
+            const res = await client.query(
+                `SELECT r.reservation_no, r._variant_no, r._warehouse_no, r.qty,
+                        ol.ln_no, ol.unit_price, ol.entered_qty, ol.entered_uom
+                 FROM inventory_reservations r
+                 JOIN order_lines ol ON ol._ord_no = r._ord_no AND ol._variant_no = r._variant_no
+                 WHERE r._ord_no = $1 AND r.status = 'active'
+                 ORDER BY r.reservation_no
+                 FOR UPDATE OF r`,
+                [ordNo]
+            );
+
+            const issued = [];
+            for (const row of res.rows) {
+                // Consume FIRST so the on_hand >= reserved CHECK holds when the
+                // OUT row's balance trigger fires.
+                const ok = await client.query('SELECT fn_consume_reservation($1) AS ok', [row.reservation_no]);
+                if (!ok.rows[0].ok) continue;   // raced by sweeper/another worker — skip
+
+                const trn = await InventoryTransactions.create({
+                    _trn_type: 'OUT',
+                    _variant_no: row._variant_no,
+                    _warehouse_no: row._warehouse_no,
+                    qty: -row.qty,
+                    unit_price: row.unit_price,
+                    entered_qty: row.entered_qty,
+                    entered_uom: row.entered_uom,
+                    _lnk_table: 'orders',
+                    _lnk_id: ordNo,
+                    _ln_no: row.ln_no,
+                }, userId, client);
+                issued.push(trn);
+            }
+            return issued;
+        };
+        return txClient ? run(txClient) : withTransaction(run);
+    }
+
+    /**
+     * Releases every reservation past its TTL. Run from the scheduled sweeper.
+     * Order-status reversal for affected orders is owned by the checkout
+     * service (phase 4) — this only frees the stock.
+     *
+     * @returns {Promise<number>} count released
+     */
+    function expireReservations() {
+        return db.query('SELECT fn_expire_reservations() AS released')
+            .then(res => res.rows[0].released);
+    }
+
+}());
+
+module.exports = InventoryService;

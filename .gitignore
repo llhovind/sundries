@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Environment — never commit secrets
+backend/.env
+frontend/.env
+.env
+.env.local
+.env.*.local
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Test output
+coverage/
+backend/coverage/
+frontend/coverage/
+playwright-report/
+test-results/
+frontend/test-results/
+
+# Playwright browser binaries
+frontend/.playwright/
+
+# Uploaded images — binary assets are not tracked in git
+backend/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+CLAUDE.md
+.claude/
+
+# archive file
+*.tar.gz

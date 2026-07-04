@@ -1,0 +1,28 @@
+@import './base.css';
+
+#app {
+  margin: 0 auto;
+  padding: 6px;
+  font-weight: normal;
+}
+
+a {
+  text-decoration: none;
+  color: var(--accent);
+  transition: 0.2s;
+}
+
+@media (hover: hover) {
+  a:hover { color: var(--accent-strong); }
+}
+
+@media (min-width: 1024px) {
+  #app {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: 3.4rem auto 1.5rem;
+    gap: 8px;
+    height: 100vh;
+    max-width: 1440px;
+  }
+}

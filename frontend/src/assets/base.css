@@ -1,0 +1,159 @@
+/* ── Neutral commerce palette ──────────────────────────────────────────────
+   Slate/ink neutrals with a single indigo accent. All components use the
+   semantic variables below; swap this block to rebrand. */
+:root {
+  --n-0:   #ffffff;
+  --n-50:  #f8fafc;
+  --n-100: #f1f5f9;
+  --n-200: #e2e8f0;
+  --n-300: #cbd5e1;
+  --n-500: #64748b;
+  --n-700: #334155;
+  --n-800: #1e293b;
+  --n-900: #0f172a;
+
+  --accent:        #4f46e5;   /* indigo 600 */
+  --accent-strong: #4338ca;
+  --accent-soft:   #eef2ff;
+  --accent-text:   #ffffff;
+
+  --ok:     #15803d;
+  --ok-soft:#dcfce7;
+  --warn:   #b45309;
+  --warn-soft:#fef3c7;
+  --danger: #b91c1c;
+  --danger-soft:#fee2e2;
+}
+
+/* semantic tokens */
+:root {
+  --color-background:      var(--n-50);
+  --color-surface:         var(--n-0);
+  --color-surface-muted:   var(--n-100);
+  --color-border:          var(--n-200);
+  --color-border-strong:   var(--n-300);
+  --color-heading:         var(--n-900);
+  --color-text:            var(--n-700);
+  --color-text-muted:      var(--n-500);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background:    #0b1220;
+    --color-surface:       #111a2c;
+    --color-surface-muted: #16223a;
+    --color-border:        #24314d;
+    --color-border-strong: #334361;
+    --color-heading:       #f1f5f9;
+    --color-text:          #cbd5e1;
+    --color-text-muted:    #8ea0bb;
+    --accent-soft:         #1e2352;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--color-text);
+  background: var(--color-background);
+  line-height: 1.6;
+  font-family:
+    Inter,
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 15px;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 { color: var(--color-heading); font-weight: 600; }
+
+button { font: inherit; }
+
+/* shared primitives */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-heading);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); color: var(--accent-text); }
+
+.btn-danger { color: var(--danger); border-color: var(--danger); background: var(--color-surface); }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.input, input[type="text"], input[type="number"], input[type="email"], input[type="date"], select, textarea {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-heading);
+  font: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+.pill.ok     { background: var(--ok-soft);     color: var(--ok); }
+.pill.warn   { background: var(--warn-soft);   color: var(--warn); }
+.pill.danger { background: var(--danger-soft); color: var(--danger); }
+.pill.accent { background: var(--accent-soft); color: var(--accent); }
+
+.table-plain {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.table-plain th {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 2px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.table-plain td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+.table-plain tr:hover td { background: var(--color-surface-muted); }
+
+.error-text { color: var(--danger); font-size: 0.85rem; }
+.muted { color: var(--color-text-muted); }
