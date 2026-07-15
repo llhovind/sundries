@@ -245,6 +245,12 @@ router.post('/request-otp', async (req, res) => {
 // POST /api/v1/auth/verify-otp  — complete login for any user type
 //
 // Body: { email, otp }
+//
+// Brute-force guard: every wrong guess increments the code's attempt_count;
+// a code past MAX_VERIFY_ATTEMPTS is dead (findValid excludes it) and the
+// shopper must go back through the rate-limited request-otp step. All
+// failure modes — wrong code, locked code, unknown email — return the same
+// 401 so nothing about account or lockout state is enumerable.
 // ---------------------------------------------------------------------------
 router.post('/verify-otp', async (req, res) => {
     const { email, otp } = req.body;
@@ -266,8 +272,12 @@ router.post('/verify-otp', async (req, res) => {
             return res.status(401).json(INVALID);
         }
 
-        const submittedHash = crypto.createHash('sha256').update(otp).digest('hex');
-        if (submittedHash !== record.otp_hash) {
+        const submittedHash = crypto.createHash('sha256').update(otp).digest();
+        const storedHash    = Buffer.from(record.otp_hash, 'hex');
+        const match = submittedHash.length === storedHash.length
+            && crypto.timingSafeEqual(submittedHash, storedHash);
+        if (!match) {
+            await OtpCodes.recordFailedAttempt(record.id);
             return res.status(401).json(INVALID);
         }
 

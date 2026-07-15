@@ -5,6 +5,11 @@ const db = require('../common/db').DB;
 const OTP_EXPIRY_MINUTES   = 10;
 const RATE_LIMIT_WINDOW_MINUTES = 15;
 const RATE_LIMIT_MAX_REQUESTS   = 3;
+// Failed verifications allowed per code before it is dead. With 6-digit
+// codes, 3 codes / 15 min and 5 guesses each, a brute-force attempt has a
+// ~1-in-66,000 chance per window — and each locked code forces the
+// rate-limited request-otp path again.
+const MAX_VERIFY_ATTEMPTS = 5;
 
 const OtpCodes = (function () {
 
@@ -12,10 +17,12 @@ const OtpCodes = (function () {
         create,
         findValid,
         markUsed,
+        recordFailedAttempt,
         countRecent,
         RATE_LIMIT_MAX_REQUESTS,
         RATE_LIMIT_WINDOW_MINUTES,
         OTP_EXPIRY_MINUTES,
+        MAX_VERIFY_ATTEMPTS,
     };
 
     /**
@@ -36,7 +43,8 @@ const OtpCodes = (function () {
     }
 
     /**
-     * Return the most recent unused, non-expired OTP for a user, or null.
+     * Return the most recent unused, non-expired OTP for a user that is not
+     * locked out by failed attempts, or null.
      *
      * @param {number} userId
      * @returns {Promise<object|null>}
@@ -48,10 +56,27 @@ const OtpCodes = (function () {
              WHERE user_id = $1
                AND used_at IS NULL
                AND expires_at > NOW()
+               AND attempt_count < $2
              ORDER BY _create_ts DESC
              LIMIT 1`,
-            [userId]
+            [userId, MAX_VERIFY_ATTEMPTS]
         ).then(res => res.rows[0] || null);
+    }
+
+    /**
+     * Record a failed verification against a code. The increment is a single
+     * atomic UPDATE, so concurrent wrong guesses cannot lose counts.
+     *
+     * @param {number} id - primary key of the otp_codes row
+     * @returns {Promise<number>} the new attempt count
+     */
+    function recordFailedAttempt(id) {
+        return db.query(
+            `UPDATE otp_codes SET attempt_count = attempt_count + 1
+             WHERE id = $1
+             RETURNING attempt_count`,
+            [id]
+        ).then(res => res.rows[0]?.attempt_count ?? 0);
     }
 
     /**

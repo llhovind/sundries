@@ -101,6 +101,41 @@ describe('given the auth flow when users register and log in then OTP and invita
             .send({ email: user.email, otp });
         expect(replay.status).toBe(401);
     });
+
+    test('given repeated wrong guesses then the code locks out and even the right code is refused', async () => {
+        const user = await makeUser('lockout');
+        const otp  = '654321';
+        const hash = crypto.createHash('sha256').update(otp).digest('hex');
+        await db.query(
+            `INSERT INTO otp_codes (user_id, otp_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '10 minutes')`,
+            [user.id, hash]);
+
+        for (let i = 0; i < 5; i++) {
+            const res = await request(app).post('/api/v1/auth/verify-otp')
+                .send({ email: user.email, otp: '000000' });
+            expect(res.status).toBe(401);
+        }
+        const counted = await db.query(
+            `SELECT attempt_count FROM otp_codes WHERE user_id = $1`, [user.id]);
+        expect(counted.rows[0].attempt_count).toBe(5);
+
+        // The code is dead: the correct OTP is refused with the SAME message
+        // a wrong one gets — lockout state is not enumerable.
+        const locked = await request(app).post('/api/v1/auth/verify-otp')
+            .send({ email: user.email, otp });
+        expect(locked.status).toBe(401);
+        expect(locked.body.message).toBe('Invalid or expired login code');
+
+        // Recovery: a fresh code (rate-limited request-otp path) works.
+        const otp2  = '111222';
+        const hash2 = crypto.createHash('sha256').update(otp2).digest('hex');
+        await db.query(
+            `INSERT INTO otp_codes (user_id, otp_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '10 minutes')`,
+            [user.id, hash2]);
+        const fresh = await request(app).post('/api/v1/auth/verify-otp')
+            .send({ email: user.email, otp: otp2 });
+        expect(fresh.status).toBe(200);
+    });
 });
 
 describe('given categories when managed then writes need catalog:write and reads are open', () => {
