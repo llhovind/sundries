@@ -17,12 +17,15 @@ function log(level, msg, extra = {}) {
  * browser redirects never change payment state here.
  *
  *   created ──authorized──▶ authorized ──captured──▶ captured ──refunded──▶ refunded
- *      └──failed──▶ failed        └──cancelled──▶ cancelled
+ *      │  └──failed──▶ failed        └──cancelled──▶ cancelled
+ *      └──captured──▶ captured   (providers do not guarantee event order)
  *
- * On 'authorized' the order's reservations are consumed (stock issues with
- * FIFO cost) and the order goes 'paid'. Capture happens at fulfillment
- * (capture-on-fulfillment policy). Every provider event is stored raw and
- * deduplicated in payment_events — a replayed webhook is a no-op.
+ * On payment confirmation ('authorized', or 'captured' arriving straight
+ * from 'created') the order's reservations are consumed (stock issues with
+ * FIFO cost) and the order goes 'paid' — exactly once, keyed to the state
+ * transition. Capture normally happens at fulfillment (capture-on-fulfillment
+ * policy). Every provider event is stored raw and deduplicated in
+ * payment_events — a replayed webhook is a no-op.
  */
 const PaymentsService = (function () {
 
@@ -127,16 +130,43 @@ const PaymentsService = (function () {
                 [payment.payment_no, to, from]
             ).then(r => r.rows.length > 0);
 
+            // Payment-confirmation effects: consume the order's reservations
+            // (stock issues at FIFO cost) and advance the order. Runs exactly
+            // once — it is keyed to the payment leaving 'created', which the
+            // conditional setPayment UPDATEs serialize. Returns whether the
+            // order actually became 'paid'.
+            const applyPaidEffects = async () => {
+                await InventoryService.consumeOrderReservations(ordNo, null, client);
+                const paid = await Orders.setStatus(ordNo, 'paid', ['pending_payment'], null, client);
+                if (!paid) {
+                    // The money is confirmed but the order already left
+                    // pending_payment (e.g. the TTL sweeper failed it first).
+                    // Captured funds with no stock held needs a human: refund
+                    // or reinstate — never swallow this.
+                    log('error', 'payment confirmed for an order no longer pending_payment — manual review required',
+                        { ord_no: ordNo, payment_no: payment.payment_no, event_type: event.type });
+                }
+                return Boolean(paid);
+            };
+
             switch (event.type) {
                 case 'authorized':
                     if (await setPayment('authorized', ['created'])) {
-                        await InventoryService.consumeOrderReservations(ordNo, null, client);
-                        await Orders.setStatus(ordNo, 'paid', ['pending_payment'], null, client);
-                        outcome = 'paid';
+                        if (await applyPaidEffects()) outcome = 'paid';
                     }
                     break;
                 case 'captured':
-                    if (await setPayment('captured', ['created', 'authorized'])) outcome = 'captured';
+                    // Providers do not guarantee delivery order: a capture can
+                    // arrive before — or without — the authorize event. When it
+                    // moves the payment straight off 'created', the paid
+                    // effects must still happen here; the late authorize event
+                    // then finds the payment past 'created' and no-ops.
+                    if (await setPayment('captured', ['created', 'authorized'])) {
+                        outcome = 'captured';
+                        if (payment.status === 'created' && await applyPaidEffects()) {
+                            outcome = 'paid';
+                        }
+                    }
                     break;
                 case 'failed':
                     if (await setPayment('failed', ['created', 'authorized'])) {
@@ -174,12 +204,19 @@ const PaymentsService = (function () {
     // ── Fulfillment capture / cancel / refund ───────────────────────────────
 
     /**
-     * Capture-on-fulfillment: called by the ship endpoint. Direct API call;
-     * the provider's 'captured' webhook is the authoritative confirmation,
-     * but we optimistically transition so the UI reflects reality.
+     * Capture-on-fulfillment: called by the ship flow (FulfillmentService),
+     * which validates the order is shippable BEFORE any money moves. Direct
+     * API call; the provider's 'captured' webhook is the authoritative
+     * confirmation, but we optimistically transition so the UI reflects
+     * reality.
+     *
+     * Idempotent: an already-captured payment (ship retried after a crash,
+     * or the capture webhook won the race) is a no-op success, so
+     * fulfillment can always be re-driven to completion.
      */
     async function captureForOrder(ordNo) {
-        const payment = await findPaymentForOrder(ordNo, ['authorized']);
+        const payment = await findPaymentForOrder(ordNo, ['authorized', 'captured']);
+        if (payment.status === 'captured') return payment.payment_no;
         const provider = getProvider(payment.provider);
         await provider.capture(payment.intent_ref);
         await db.query(

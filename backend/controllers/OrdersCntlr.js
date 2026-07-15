@@ -1,10 +1,9 @@
 'use strict';
 
-const Orders          = require('../models/orders');
-const Rbac            = require('../models/rbac');
-const PaymentsService = require('../services/paymentsService');
-const Pagination      = require('../common/pagination');
-const mailer          = require('../common/mailer');
+const Orders             = require('../models/orders');
+const Rbac               = require('../models/rbac');
+const FulfillmentService = require('../services/fulfillmentService');
+const Pagination         = require('../common/pagination');
 
 const OrdersCntlr = function () {
 
@@ -59,18 +58,7 @@ const OrdersCntlr = function () {
         const ordNo = parseInt(req.params.ord_no, 10);
         if (isNaN(ordNo)) return next({ status: 400, message: 'Invalid order number' });
         try {
-            await PaymentsService.captureForOrder(ordNo);
-            const updated = await Orders.setStatus(ordNo, 'shipped', ['paid', 'processing'], req.user.id);
-            if (!updated) return next({ status: 409, message: 'Order is not in a shippable state' });
-            await Orders.markLinesShipped(ordNo);
-
-            Orders.findOne(ordNo, { staff: true }).then(order => {
-                if (order) {
-                    mailer.sendOrderEvent('order_shipped', order, order.email).catch(() => {});
-                }
-            }).catch(() => {});
-
-            res.locals.results = { ord_no: ordNo, status: 'shipped' };
+            res.locals.results = await FulfillmentService.shipOrder(ordNo, req.user.id);
             res.locals.status  = 200;
             res.locals.message = 'Order shipped and payment captured';
             next();

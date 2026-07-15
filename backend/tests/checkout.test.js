@@ -279,6 +279,32 @@ describe('given a placed order when the provider confirms payment then stock iss
         expect(out.rows[0].n).toBe(1);
     });
 
+    test('given webhook "captured" arriving before "authorized" then the order is still paid and stock issued once', async () => {
+        const { order } = await placedOrder('OOO');
+
+        // Providers do not guarantee event order: capture lands first.
+        const capture = await fakeConfirm(order.payment.intent_ref, 'captured');
+        expect(capture.status).toBe(200);
+        expect(capture.body.content.outcome).toBe('paid');
+
+        expect((await orderRow(order.ord_no)).status).toBe('paid');
+        const pay = await db.query(`SELECT status FROM payments WHERE _ord_no = $1`, [order.ord_no]);
+        expect(pay.rows[0].status).toBe('captured');
+        const resv = await db.query(
+            `SELECT status FROM inventory_reservations WHERE _ord_no = $1`, [order.ord_no]);
+        expect(resv.rows[0].status).toBe('consumed');
+
+        // The late-arriving authorize event is a harmless no-op, not a regression.
+        const late = await fakeConfirm(order.payment.intent_ref, 'authorized');
+        expect(late.status).toBe(200);
+        expect(late.body.content.outcome).toBe('noop');
+
+        const out = await db.query(
+            `SELECT COUNT(*)::int AS n FROM inventory_transactions
+             WHERE _lnk_table = 'orders' AND _lnk_id = $1`, [order.ord_no]);
+        expect(out.rows[0].n).toBe(1);   // stock issued exactly once
+    });
+
     test('given webhook "failed" then reservations release and the order is payment_failed', async () => {
         const { order, variantNo } = await placedOrder('FAIL');
         await fakeConfirm(order.payment.intent_ref, 'failed');
@@ -322,6 +348,44 @@ describe('given a placed order when the provider confirms payment then stock iss
         const lines = await db.query(
             `SELECT fulfillment_status FROM order_lines WHERE _ord_no = $1`, [order.ord_no]);
         expect(lines.rows[0].fulfillment_status).toBe('shipped');
+    });
+
+    test('given an order still awaiting payment when staff ship it then 409 and nothing is captured', async () => {
+        const { order } = await placedOrder('EARLYSHIP');
+
+        const staff = await makeShopper('earlyshipper');
+        const res = await request(app)
+            .post(`/api/v1/orders/${order.ord_no}/ship`)
+            .set('Authorization', `Bearer ${token(staff, ['orders:fulfill'], ['fulfillment'])}`);
+        expect(res.status).toBe(409);
+        expect(res.body.outcome.message).toMatch(/not in a shippable state/);
+
+        // Validate-before-capture: the order and the money are untouched.
+        expect((await orderRow(order.ord_no)).status).toBe('pending_payment');
+        const pay = await db.query(`SELECT status FROM payments WHERE _ord_no = $1`, [order.ord_no]);
+        expect(pay.rows[0].status).toBe('created');
+    });
+
+    test('given a ship that died after capture when ship is re-run then it completes; a third call is 409', async () => {
+        const { order } = await placedOrder('RESHIP');
+        await fakeConfirm(order.payment.intent_ref, 'authorized');
+        // Simulate the crash: payment captured, order never transitioned.
+        await PaymentsService.captureForOrder(order.ord_no);
+
+        const staff = await makeShopper('reshipper');
+        const res = await request(app)
+            .post(`/api/v1/orders/${order.ord_no}/ship`)
+            .set('Authorization', `Bearer ${token(staff, ['orders:fulfill'], ['fulfillment'])}`);
+        expect(res.status).toBe(200);   // idempotent capture lets fulfillment recover
+
+        expect((await orderRow(order.ord_no)).status).toBe('shipped');
+        const pay = await db.query(`SELECT status FROM payments WHERE _ord_no = $1`, [order.ord_no]);
+        expect(pay.rows[0].status).toBe('captured');
+
+        const again = await request(app)
+            .post(`/api/v1/orders/${order.ord_no}/ship`)
+            .set('Authorization', `Bearer ${token(staff, ['orders:fulfill'], ['fulfillment'])}`);
+        expect(again.status).toBe(409);   // double-ship loses cleanly
     });
 
     test('given a captured payment when Finance refunds it then refund + payment status update with audit', async () => {
