@@ -9,6 +9,11 @@ const InventoryTransactions = require('../models/inventoryTransactions');
 const InventoryService      = require('../services/inventoryService');
 const Pagination            = require('../common/pagination');
 
+// Stock transfers (warehouse → transport → warehouse) — own router; must be
+// registered before the parameterized routes below so 'transfers' never
+// parses as a variant number.
+router.use('/transfers', require('./stockTransfers'));
+
 // GET /api/v1/inventory/balances?q=&page=&pageSize= — per-variant totals with
 // per-warehouse breakdown (inventory:read)
 router.get('/balances', requirePermission('inventory:read'), async (req, res, next) => {

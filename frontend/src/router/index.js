@@ -6,6 +6,7 @@ import CheckoutView from '../views/CheckoutView.vue';
 import MyOrdersView from '../views/MyOrdersView.vue';
 import ProductsAdminView from '../views/admin/ProductsAdminView.vue';
 import InventoryAdminView from '../views/admin/InventoryAdminView.vue';
+import StockTransfersView from '../views/admin/StockTransfersView.vue';
 import OrdersAdminView from '../views/admin/OrdersAdminView.vue';
 import ReportsView from '../views/admin/ReportsView.vue';
 import PromotionsView from '../views/admin/PromotionsView.vue';
@@ -37,6 +38,8 @@ const router = createRouter({
           meta: { requiresPerm: ['catalog:write'] } },
         { path: 'admin/inventory',  name: 'admin-inventory',  component: InventoryAdminView,
           meta: { requiresPerm: ['inventory:read'] } },
+        { path: 'admin/transfers',  name: 'admin-transfers',  component: StockTransfersView,
+          meta: { requiresPerm: ['inventory:transfer'] } },
         { path: 'admin/orders',     name: 'admin-orders',     component: OrdersAdminView,
           meta: { requiresPerm: ['orders:read'] } },
         { path: 'admin/reports',    name: 'admin-reports',    component: ReportsView,
