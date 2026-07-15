@@ -257,25 +257,57 @@ const PaymentsService = (function () {
     }
 
     /**
-     * Manual refund (Finance role — refunds:create). Records the refund,
-     * executes it at the provider, and updates payment status.
+     * Manual refund (Finance role — refunds:create). Claims budget from the
+     * payment's remaining refundable amount, executes at the provider, and
+     * updates payment status from the cumulative total.
+     *
+     * Only captured money is refundable. An 'authorized' (uncaptured) payment
+     * cannot be refunded at any provider — undoing one is a cancel/void, not
+     * a refund.
+     *
+     * The budget claim runs with the payment row locked and counts 'created'
+     * rows (in-flight refunds) as spent, so concurrent refunds cannot
+     * together exceed the captured amount. A refund that fails at the
+     * provider is marked 'failed' and returns its budget.
      */
     async function refundOrder(ordNo, amount, reason, actorUserId) {
         if (!(amount > 0)) throw Object.assign(new Error('amount must be positive'), { status: 400 });
         if (!reason)       throw Object.assign(new Error('reason is required'), { status: 400 });
 
-        const payment = await findPaymentForOrder(ordNo, ['captured', 'refunded', 'partially_refunded', 'authorized']);
-        const refRes = await db.query(
-            `INSERT INTO refunds (_payment_no, _ord_no, amount, reason, status, _create_user_id, _modify_user_id)
-             VALUES ($1, $2, $3, $4, 'created', $5, $5)
-             RETURNING refund_no`,
-            [payment.payment_no, ordNo, amount, reason, actorUserId]
-        );
-        const refundNo = refRes.rows[0].refund_no;
+        const payment = await findPaymentForOrder(ordNo, ['captured', 'partially_refunded', 'refunded']);
+
+        const { refundNo, alreadyRefunded } = await withTransaction(async (client) => {
+            await client.query(
+                `SELECT payment_no FROM payments WHERE payment_no = $1 FOR UPDATE`,
+                [payment.payment_no]);
+            const spent = await client.query(
+                `SELECT COALESCE(SUM(amount), 0) AS refunded FROM refunds
+                 WHERE _payment_no = $1 AND status IN ('created', 'completed')`,
+                [payment.payment_no]);
+            // Compare in integer cents — the pg numeric parser hands back
+            // floats, and float sums miss exact boundaries (30 + 9.95 ≠ 39.95).
+            const toCents   = n => Math.round(Number(n) * 100);
+            const already   = Number(spent.rows[0].refunded);
+            const remaining = (toCents(payment.amount) - toCents(already)) / 100;
+            if (toCents(amount) > toCents(remaining)) {
+                throw Object.assign(
+                    new Error(`Refund of ${amount} exceeds the remaining refundable amount ` +
+                              `(${remaining.toFixed(2)} of ${payment.amount})`),
+                    { status: 422 });
+            }
+            const ins = await client.query(
+                `INSERT INTO refunds (_payment_no, _ord_no, amount, reason, status, _create_user_id, _modify_user_id)
+                 VALUES ($1, $2, $3, $4, 'created', $5, $5)
+                 RETURNING refund_no`,
+                [payment.payment_no, ordNo, amount, reason, actorUserId]
+            );
+            return { refundNo: ins.rows[0].refund_no, alreadyRefunded: already };
+        });
 
         try {
             const r = await getProvider(payment.provider).refund(payment.intent_ref, amount);
-            const partial = Number(amount) < Number(payment.amount);
+            const toCents = n => Math.round(Number(n) * 100);
+            const fullyRefunded = toCents(alreadyRefunded) + toCents(amount) >= toCents(payment.amount);
             await withTransaction(async (client) => {
                 await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorUserId)]);
                 await client.query(
@@ -285,7 +317,7 @@ const PaymentsService = (function () {
                 );
                 await client.query(
                     `UPDATE payments SET status = $2, _modify_ts = NOW() WHERE payment_no = $1`,
-                    [payment.payment_no, partial ? 'partially_refunded' : 'refunded']
+                    [payment.payment_no, fullyRefunded ? 'refunded' : 'partially_refunded']
                 );
             });
             return { refund_no: refundNo, status: 'completed' };
@@ -305,9 +337,8 @@ const PaymentsService = (function () {
     async function sweepExpired() {
         const released = await InventoryService.expireReservations();
 
-        const ttlRes = await db.query(
-            `SELECT value FROM app_settings WHERE key = 'reservations.ttl_minutes'`);
-        const ttl = ttlRes.rows.length ? Number(ttlRes.rows[0].value) : 15;
+        const Settings = require('../common/settings');
+        const ttl = await Settings.getNumber('reservations.ttl_minutes', 15);
 
         const stale = await db.query(
             `SELECT ord_no FROM orders

@@ -1,8 +1,10 @@
 'use strict';
 
 const { DB: db, withTransaction } = require('../common/db');
+const Settings = require('../common/settings');
 const InventoryTransactions = require('../models/inventoryTransactions');
 
+// Fallback when app_settings 'reservations.ttl_minutes' is absent/invalid.
 const DEFAULT_RESERVATION_TTL_MINUTES = 15;
 
 /**
@@ -117,15 +119,18 @@ const InventoryService = (function () {
      * @param {number} ordNo
      * @param {Array<{orderLineId:number, variantNo:number, qty:number}>} lines
      * @param {number} userId
-     * @param {number} [ttlMinutes]
+     * @param {number} [ttlMinutes] - explicit override (tests); omitted callers
+     *                                get the admin-configured app_settings value
      * @param {object} [txClient] - pg client to join a caller-managed transaction
      *                              (checkout creates order + reservations atomically)
      * @returns {Promise<Array<{reservation_no:number, variant_no:number, warehouse_no:number, qty:number, expires_at:Date}>>}
      */
-    function reserveForOrder(ordNo, lines, userId, ttlMinutes = DEFAULT_RESERVATION_TTL_MINUTES, txClient = null) {
+    function reserveForOrder(ordNo, lines, userId, ttlMinutes = null, txClient = null) {
         if (!lines || !lines.length) return Promise.reject(new Error('No lines to reserve'));
 
         const run = async (client) => {
+            const ttl = ttlMinutes ?? await Settings.getNumber(
+                'reservations.ttl_minutes', DEFAULT_RESERVATION_TTL_MINUTES);
             const reservations = [];
             const failures     = [];
 
@@ -147,7 +152,7 @@ const InventoryService = (function () {
                      VALUES ($1, $2, $3, $4, NOW() + ($5 || ' minutes')::INTERVAL, $6)
                      RETURNING reservation_no, _variant_no AS variant_no,
                                _warehouse_no AS warehouse_no, qty, expires_at`,
-                    [ordNo, line.variantNo, warehouseNo, line.qty, ttlMinutes, userId]
+                    [ordNo, line.variantNo, warehouseNo, line.qty, ttl, userId]
                 );
 
                 if (line.orderLineId) {

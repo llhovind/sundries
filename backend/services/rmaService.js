@@ -8,8 +8,13 @@ const PaymentsService       = require('./paymentsService');
  * RmaService — returns workflow.
  *
  *   requested ──approve──▶ approved ──receive──▶ received ──refund──▶ refunded ──close──▶ closed
- *       └──reject──▶ rejected ──close──▶ closed
+ *       └──reject──▶ rejected (terminal)
  *
+ * - 'rejected' is terminal on purpose: every non-rejected RMA line counts
+ *   against its order line's return budget (you cannot return more than was
+ *   bought, cumulatively across RMAs), and a rejected request must hand its
+ *   claim back. If it could drift into the shared 'closed' state the two
+ *   would be indistinguishable.
  * - Customers open RMAs against their own shipped orders; staff (rma:manage)
  *   drive the rest of the lifecycle.
  * - Receiving with restock=true writes RET ledger rows at the line's original
@@ -29,7 +34,7 @@ const RmaService = (function () {
         approved:  ['received'],
         received:  ['refunded', 'closed'],
         refunded:  ['closed'],
-        rejected:  ['closed'],
+        rejected:  [],
         closed:    [],
     };
 
@@ -70,9 +75,12 @@ const RmaService = (function () {
             const rmaNo = rmaRes.rows[0].rma_no;
 
             for (const ln of lines) {
+                // FOR UPDATE serializes concurrent RMA requests against the
+                // same order line, so the cumulative budget check below holds.
                 const lineRes = await client.query(
                     `SELECT id, qty, fulfillment_status FROM order_lines
-                     WHERE id = $1 AND _ord_no = $2`,
+                     WHERE id = $1 AND _ord_no = $2
+                     FOR UPDATE`,
                     [ln.order_line_id, ord_no]
                 );
                 const line = lineRes.rows[0];
@@ -82,6 +90,26 @@ const RmaService = (function () {
                     throw Object.assign(
                         new Error(`Return qty for line ${ln.order_line_id} must be between 0 and ${line.qty}`),
                         { status: 400 });
+                }
+                // Cumulative budget: every non-rejected RMA line (including
+                // lines already added in this request) counts against the
+                // order line's purchased quantity.
+                const prior = await client.query(
+                    `SELECT COALESCE(SUM(rl.qty), 0) AS returned
+                     FROM rma_lines rl
+                     JOIN rmas r ON r.rma_no = rl._rma_no
+                     WHERE rl._order_line_id = $1 AND r.status <> 'rejected'`,
+                    [ln.order_line_id]
+                );
+                // Fixed-point compare (qty is NUMERIC(14,4); pg hands back
+                // floats, and float sums miss exact boundaries).
+                const toUnits = n => Math.round(Number(n) * 10000);
+                const alreadyReturned = Number(prior.rows[0].returned);
+                if (toUnits(alreadyReturned) + toUnits(ln.qty) > toUnits(line.qty)) {
+                    throw Object.assign(
+                        new Error(`Return qty for line ${ln.order_line_id} exceeds the remaining ` +
+                                  `returnable quantity (${Number(line.qty) - alreadyReturned} of ${line.qty})`),
+                        { status: 409 });
                 }
                 await client.query(
                     `INSERT INTO rma_lines (_rma_no, _order_line_id, qty, condition)

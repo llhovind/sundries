@@ -31,7 +31,7 @@ const CartsCntlr = function () {
         if (!(parseFloat(qty) > 0)) return next({ status: 400, message: 'qty must be greater than 0' });
 
         Carts.getOrCreate(req.user.id)
-            .then(cart => Carts.upsertItem(cart.cart_no, variant_no, parseFloat(qty))
+            .then(cart => Carts.addItem(cart.cart_no, variant_no, parseFloat(qty))
                 .then(row => {
                     if (!row) return next({ status: 404, message: 'Product is not available' });
                     return Carts.findOpenCart(req.user.id).then(updated => {
@@ -57,7 +57,7 @@ const CartsCntlr = function () {
                 if (!cart.items.some(i => Number(i.variant_no) === variantNo)) {
                     return next({ status: 404, message: 'Item not in cart' });
                 }
-                return Carts.upsertItem(cart.cart_no, variantNo, qty)
+                return Carts.setItemQty(cart.cart_no, variantNo, qty)
                     .then(() => Carts.findOpenCart(req.user.id))
                     .then(updated => {
                         res.locals.results = { cart: updated };

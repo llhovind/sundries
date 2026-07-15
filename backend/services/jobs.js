@@ -80,9 +80,8 @@ const Jobs = (function () {
             log('info', 'daily sales rollup complete', { days: 3 });
         },
         [QUEUES.PARTITION]: async () => {
-            const setting = await db.query(
-                `SELECT value FROM app_settings WHERE key = 'inventory.partition_months'`);
-            const months = setting.rows.length ? Number(setting.rows[0].value) : -1;
+            const Settings = require('../common/settings');
+            const months = await Settings.getNumber('inventory.partition_months', -1);
             if (months < 0) return;   // scale-down mode: default partition only
             const res = await db.query('SELECT fn_ensure_inventory_partitions($1) AS created', [months]);
             if (res.rows[0].created) log('info', 'inventory partitions created', { created: res.rows[0].created });

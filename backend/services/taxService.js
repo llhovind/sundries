@@ -1,6 +1,7 @@
 'use strict';
 
 const { DB: db } = require('../common/db');
+const Settings   = require('../common/settings');
 
 /**
  * TaxService — pluggable tax calculation port.
@@ -26,8 +27,7 @@ const TaxService = (function () {
      * @returns {Promise<{rate:number, tax:number, provider:string}>}
      */
     async function calculate(taxableAmount, address = {}) {
-        const setting  = await db.query(`SELECT value FROM app_settings WHERE key = 'tax.provider'`);
-        const provider = setting.rows.length ? JSON.parse(JSON.stringify(setting.rows[0].value)) : 'local';
+        const provider = await Settings.getString('tax.provider', 'local');
 
         if (provider === 'stripe') {
             process.stdout.write(JSON.stringify({

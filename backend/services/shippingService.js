@@ -9,10 +9,14 @@ const { DB: db } = require('../common/db');
  * [min_subtotal, max_subtotal) range contains the order subtotal
  * (seeded: $9.95 under $50, free at $50+).
  *
- * Weight surcharge: per line whose UNIT weight exceeds the lowest band's
- * min_weight_lbs (seeded: 40 lb), the matching shipping_weight_bands
- * surcharge is added once per line — heavy items ship as freight regardless
- * of order value.
+ * Weight surcharge — package model, matched against shipping_weight_bands
+ * (seeded: 40–70 lb and 70+ lb). Heavy packages ship as freight regardless
+ * of order value:
+ *   - unit goods: each unit is its own package — the band is matched on the
+ *     UNIT weight and the surcharge applies per unit (qty × surcharge).
+ *   - measured goods: a line is one continuous cut, i.e. one package — the
+ *     band is matched on the CUT's total weight (per-UOM weight × qty) and
+ *     the surcharge applies once.
  *
  * A carrier-API adapter can replace this behind the same calculate() call.
  */
@@ -22,7 +26,8 @@ const ShippingService = (function () {
 
     /**
      * @param {number} subtotal
-     * @param {Array<{qty:number, weight_lbs:number|null}>} lines - unit weight per line
+     * @param {Array<{qty:number, weight_lbs:number|null, sell_method?:string}>} lines
+     *        - weight_lbs is per unit / per base UOM
      * @returns {Promise<{base:number, surcharge:number, total:number}>}
      */
     async function calculate(subtotal, lines = []) {
@@ -46,12 +51,20 @@ const ShippingService = (function () {
 
         let surcharge = 0;
         for (const line of lines) {
-            const w = Number(line.weight_lbs) || 0;
+            const unitWeight = Number(line.weight_lbs) || 0;
+            if (!unitWeight) continue;
+            const qty       = Number(line.qty) || 0;
+            const isMeasure = line.sell_method === 'measure';
+            // One package per unit for unit goods; the whole cut is one
+            // package for measured goods.
+            const packageWeight = isMeasure ? unitWeight * qty : unitWeight;
+            const packageCount  = isMeasure ? 1 : qty;
             const band = bands.find(b =>
-                w >= Number(b.min_weight_lbs) &&
-                (b.max_weight_lbs == null || w < Number(b.max_weight_lbs)));
-            if (band) surcharge += Number(band.surcharge);
+                packageWeight >= Number(b.min_weight_lbs) &&
+                (b.max_weight_lbs == null || packageWeight < Number(b.max_weight_lbs)));
+            if (band) surcharge += Number(band.surcharge) * packageCount;
         }
+        surcharge = Number(surcharge.toFixed(2));
 
         return { base, surcharge, total: Number((base + surcharge).toFixed(2)) };
     }

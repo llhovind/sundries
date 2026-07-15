@@ -269,6 +269,37 @@ describe('given a shipped order when returned then the RMA lifecycle drives stoc
         expect(oversize.status).toBe(400);
     });
 
+    test('given cumulative returns then a line cannot be over-returned across RMAs; a rejection frees its claim', async () => {
+        const { user, order, line } = await shippedOrder('RMA6');   // qty 2 purchased
+
+        const first = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'first', lines: [{ order_line_id: line.id, qty: 2 }] });
+        expect(first.status).toBe(201);
+        const firstRma = first.body.content.rma_no;
+
+        // The open RMA holds the full budget — a second return is rejected.
+        const second = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'second', lines: [{ order_line_id: line.id, qty: 1 }] });
+        expect(second.status).toBe(409);
+        expect(second.body.outcome.message).toMatch(/remaining returnable/);
+
+        // Rejection is terminal and hands the claim back.
+        const reject = await request(app).put(`/api/v1/rmas/${firstRma}/status`)
+            .set('Authorization', `Bearer ${adminToken()}`).send({ status: 'rejected' });
+        expect(reject.status).toBe(200);
+
+        const closeRejected = await request(app).put(`/api/v1/rmas/${firstRma}/status`)
+            .set('Authorization', `Bearer ${adminToken()}`).send({ status: 'closed' });
+        expect(closeRejected.status).toBe(409);   // no rejected → closed drift
+
+        const retry = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'retry', lines: [{ order_line_id: line.id, qty: 2 }] });
+        expect(retry.status).toBe(201);
+    });
+
     test('given a customer without rma:manage then staff endpoints are 403', async () => {
         const { user, order, line } = await shippedOrder('RMA5');
         const req1 = await request(app).post('/api/v1/rmas')

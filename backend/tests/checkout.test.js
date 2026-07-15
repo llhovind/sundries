@@ -160,6 +160,30 @@ describe('given an open cart when the customer places the order then it is price
         expect(order.shipping).toBe(25);     // free base + 25 heavy-band surcharge
     });
 
+    test('given multiple heavy units then freight applies per unit; a heavy measured cut pays once', async () => {
+        const heavy = await makeVariant('HEAVY2', { price: 40, product: heavyProductNo });
+        await receive(heavy, 5, 20);
+        const unitUser = await makeShopper('perunit', [{ variantNo: heavy, qty: 2 }]);   // two 55 lb packages
+
+        const unitRes = await placeOrder(unitUser);
+        expect(unitRes.status).toBe(201);
+        expect(unitRes.body.content.order.shipping).toBe(50);   // free base (subtotal 80) + 2 × 25.00
+
+        // A measured line is ONE package banded by the cut's total weight.
+        const chainProd = Number((await db.query(
+            `INSERT INTO products (name, status, sell_method, base_uom, min_cut_qty, weight_lbs)
+             VALUES ($1, 'active', 'measure', 'ft', 2, 5) RETURNING product_no`,
+            [`Chain ${RUN}`])).rows[0].product_no);
+        const chain = await makeVariant('CHAIN', { price: 3, product: chainProd });
+        await receive(chain, 100);
+        const cutUser = await makeShopper('cutweight', [{ variantNo: chain, qty: 10 }]);   // 10 ft × 5 lb = 50 lb cut
+
+        const cutRes = await placeOrder(cutUser);
+        expect(cutRes.status).toBe(201);
+        expect(cutRes.body.content.order.subtotal).toBe(30);
+        expect(cutRes.body.content.order.shipping).toBe(9.95 + 25);   // base + one 40–70 lb package
+    });
+
     test('given a measured product below its minimum cut then checkout is rejected', async () => {
         const rope = await makeVariant('ROPE', { price: 3, product: measureProductNo });
         await receive(rope, 100);
@@ -412,6 +436,59 @@ describe('given a placed order when the provider confirms payment then stock iss
         expect(pay.rows[0].status).toBe('partially_refunded');
     });
 
+    test('given cumulative refunds then they cannot exceed the captured amount; the final one flips to refunded', async () => {
+        const { order } = await placedOrder('REFCAP');   // total 39.95
+        await fakeConfirm(order.payment.intent_ref, 'authorized');
+        await PaymentsService.captureForOrder(order.ord_no);
+        const fin  = await makeShopper('refcapfin');
+        const auth = `Bearer ${token(fin, ['refunds:create'], ['finance'])}`;
+
+        const first = await request(app).post(`/api/v1/payments/${order.ord_no}/refund`)
+            .set('Authorization', auth).send({ amount: 30, reason: 'partial credit' });
+        expect(first.status).toBe(201);
+
+        const over = await request(app).post(`/api/v1/payments/${order.ord_no}/refund`)
+            .set('Authorization', auth).send({ amount: 15, reason: 'too much' });
+        expect(over.status).toBe(422);
+        expect(over.body.outcome.message).toMatch(/exceeds the remaining refundable/);
+
+        const rest = await request(app).post(`/api/v1/payments/${order.ord_no}/refund`)
+            .set('Authorization', auth).send({ amount: 9.95, reason: 'remainder' });
+        expect(rest.status).toBe(201);
+
+        const pay = await db.query(`SELECT status FROM payments WHERE _ord_no = $1`, [order.ord_no]);
+        expect(pay.rows[0].status).toBe('refunded');   // cumulative total reached, not partially_refunded
+    });
+
+    test('given an authorized (uncaptured) payment then refunding is rejected — undoing it is a cancel, not a refund', async () => {
+        const { order } = await placedOrder('REFAUTH');
+        await fakeConfirm(order.payment.intent_ref, 'authorized');
+
+        const fin = await makeShopper('refauthfin');
+        const res = await request(app).post(`/api/v1/payments/${order.ord_no}/refund`)
+            .set('Authorization', `Bearer ${token(fin, ['refunds:create'], ['finance'])}`)
+            .send({ amount: 10, reason: 'nope' });
+        expect(res.status).toBe(409);
+
+        const refunds = await db.query(
+            `SELECT COUNT(*)::int AS n FROM refunds WHERE _ord_no = $1`, [order.ord_no]);
+        expect(refunds.rows[0].n).toBe(0);
+    });
+
+    test('given reservations.ttl_minutes is reconfigured then new reservations honor it', async () => {
+        await db.query(`UPDATE app_settings SET value = '45' WHERE key = 'reservations.ttl_minutes'`);
+        try {
+            const { order } = await placedOrder('TTLCFG');
+            const r = await db.query(
+                `SELECT expires_at, _create_ts FROM inventory_reservations WHERE _ord_no = $1`,
+                [order.ord_no]);
+            const minutes = (new Date(r.rows[0].expires_at) - new Date(r.rows[0]._create_ts)) / 60000;
+            expect(Math.round(minutes)).toBe(45);
+        } finally {
+            await db.query(`UPDATE app_settings SET value = '15' WHERE key = 'reservations.ttl_minutes'`);
+        }
+    });
+
     test('given payment never confirms within the TTL then the sweeper fails the order and frees stock', async () => {
         const { order, variantNo } = await placedOrder('TTL');
 
@@ -470,6 +547,22 @@ describe('given a guest when they check out then an implicit account carries the
             `SELECT COUNT(*)::int AS n FROM orders o
              JOIN customers c ON c.id = o._customer_id WHERE c.email = $1`, [email]);
         expect(orders.rows[0].n).toBe(2);
+    });
+
+    test('given the same variant listed twice then the lines merge into one', async () => {
+        const v = await makeVariant('GDUP', { price: 10 });
+        await receive(v, 10);
+
+        const res = await request(app)
+            .post('/api/v1/checkout/guest')
+            .send({ email: `guest-dup-${RUN}@example.com`, name: 'Dup Guest', shipTo: SHIP_TO,
+                    items: [{ variant_no: v, qty: 2 }, { variant_no: v, qty: 1 }] });
+        expect(res.status).toBe(201);
+
+        const lines = await db.query(
+            `SELECT qty FROM order_lines WHERE _ord_no = $1`, [res.body.content.order.ord_no]);
+        expect(lines.rows).toHaveLength(1);
+        expect(Number(lines.rows[0].qty)).toBe(3);
     });
 
     test('given no valid email then guest checkout is rejected', async () => {

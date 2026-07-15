@@ -151,6 +151,23 @@ describe('given the cart API when a shopper builds a cart then lines carry snaps
         expect(removed.body.content.cart.items).toEqual([]);
     });
 
+    test('given the same item added twice then the line accumulates; PUT still sets an absolute qty', async () => {
+        const shopper = await makeShopper('cartadd');
+        const auth = `Bearer ${token(shopper)}`;
+        const v = await makeStockedVariant('ACC');
+
+        await request(app).post('/api/v1/cart/items').set('Authorization', auth).send({ variant_no: v, qty: 2 });
+        const again = await request(app).post('/api/v1/cart/items')
+            .set('Authorization', auth).send({ variant_no: v, qty: 3 });
+        expect(again.status).toBe(200);
+        expect(again.body.content.cart.items).toHaveLength(1);
+        expect(Number(again.body.content.cart.items[0].qty)).toBe(5);   // add-to-cart accumulates
+
+        const set = await request(app).put(`/api/v1/cart/items/${v}`)
+            .set('Authorization', auth).send({ qty: 2 });
+        expect(Number(set.body.content.cart.items[0].qty)).toBe(2);     // stepper is absolute
+    });
+
     test('given an inactive variant then adding it is rejected', async () => {
         const shopper = await makeShopper('inactive');
         const v = await makeStockedVariant('DEAD');

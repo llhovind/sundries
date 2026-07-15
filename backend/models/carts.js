@@ -10,7 +10,7 @@ const { DB: db } = require('../common/db');
  */
 const Carts = (function () {
 
-    return { findOpenCart, getOrCreate, upsertItem, removeItem };
+    return { findOpenCart, getOrCreate, addItem, setItemQty, removeItem };
 
     /**
      * The user's open cart with line items joined to live catalog data.
@@ -62,10 +62,11 @@ const Carts = (function () {
     }
 
     /**
-     * Adds a variant to the cart or updates its quantity. unit_price is
-     * snapshotted from the live variant price at add time.
+     * Adds a variant to the cart, ACCUMULATING onto any existing line —
+     * "add to cart" twice means two more, matching the guest (local) cart.
+     * unit_price is snapshotted from the live variant price at first add.
      */
-    function upsertItem(cartNo, variantNo, qty) {
+    function addItem(cartNo, variantNo, qty) {
         return db.query(
             `INSERT INTO cart_items (_cart_no, _variant_no, qty, unit_price)
              SELECT $1, v.variant_no, $3, v.price
@@ -73,10 +74,22 @@ const Carts = (function () {
              JOIN products p ON p.product_no = v._product_no
              WHERE v.variant_no = $2 AND v.status = 'active' AND p.status = 'active'
              ON CONFLICT (_cart_no, _variant_no) DO UPDATE
-                SET qty = EXCLUDED.qty, _modify_ts = NOW()
+                SET qty = cart_items.qty + EXCLUDED.qty, _modify_ts = NOW()
              RETURNING id`,
             [cartNo, variantNo, qty]
         ).then(res => res.rows[0] || null);   // null → variant unknown/inactive
+    }
+
+    /**
+     * Sets a line's quantity to an absolute value (the cart's qty stepper).
+     */
+    function setItemQty(cartNo, variantNo, qty) {
+        return db.query(
+            `UPDATE cart_items SET qty = $3, _modify_ts = NOW()
+             WHERE _cart_no = $1 AND _variant_no = $2
+             RETURNING id`,
+            [cartNo, variantNo, qty]
+        ).then(res => res.rows[0] || null);   // null → line not in cart
     }
 
     function removeItem(cartNo, variantNo) {

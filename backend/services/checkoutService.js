@@ -1,6 +1,7 @@
 'use strict';
 
 const { DB: db, withTransaction } = require('../common/db');
+const Settings         = require('../common/settings');
 const Orders           = require('../models/orders');
 const Customers        = require('../models/customers');
 const InventoryService = require('./inventoryService');
@@ -81,8 +82,16 @@ const CheckoutService = (function () {
         if (!name)  throw Object.assign(new Error('name is required'), { status: 400 });
         if (!items.length) throw Object.assign(new Error('items are required'), { status: 400 });
 
+        // Inline items may repeat a variant (client bugs, hand-built requests);
+        // orders key lines by variant, so merge duplicates by summing qty.
+        const mergedItems = [...items.reduce((m, i) => {
+            const key = Number(i.variant_no);
+            m.set(key, { variant_no: key, qty: Number(i.qty) + (m.get(key)?.qty || 0) });
+            return m;
+        }, new Map()).values()];
+
         const account = await Customers.ensureGuestAccount({ email, name, ...shipTo });
-        const resolved = await Orders.resolveCheckoutItems(items);
+        const resolved = await Orders.resolveCheckoutItems(mergedItems);
 
         return place({
             customerId: account.customerId,
@@ -162,8 +171,7 @@ const CheckoutService = (function () {
         const taxInfo  = await TaxService.calculate(taxable, shipTo);
         const total    = round2(taxable + shipping.total + taxInfo.tax);
 
-        const curRes   = await db.query(`SELECT value FROM app_settings WHERE key = 'store.currency'`);
-        const currency = curRes.rows.length ? String(curRes.rows[0].value).replace(/"/g, '') : 'USD';
+        const currency = await Settings.getString('store.currency', 'USD');
 
         // 4. Order + reservations, atomically
         const { ord_no } = await withTransaction(async (client) => {
