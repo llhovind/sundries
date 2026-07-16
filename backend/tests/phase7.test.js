@@ -300,6 +300,103 @@ describe('given a shipped order when returned then the RMA lifecycle drives stoc
         expect(retry.status).toBe(201);
     });
 
+    test('given a partially shipped order then shipped lines are returnable and backordered lines are not', async () => {
+        const stocked   = await makeVariant('PS-A', 15);
+        const unstocked = (await db.query(
+            `INSERT INTO product_variants (_product_no, sku, price) VALUES ($1, $2, 8) RETURNING variant_no`,
+            [productNo, `P7-${RUN}-PS-B`])).rows[0].variant_no;
+
+        const user = await makeShopper('partial', [
+            { variantNo: stocked, qty: 1 }, { variantNo: Number(unstocked), qty: 2 }]);
+        const placed = await checkout(user, { backorders: { [unstocked]: 'backorder' } });
+        expect(placed.status).toBe(201);
+        const order = placed.body.content.order;
+        await request(app).post('/api/v1/payments/fake/confirm')
+            .send({ intent_ref: order.payment.intent_ref, outcome: 'authorized' });
+
+        const ship = await request(app).post(`/api/v1/orders/${order.ord_no}/ship`)
+            .set('Authorization', `Bearer ${adminToken()}`);
+        expect(ship.status).toBe(200);
+        expect(ship.body.content.status).toBe('partially_shipped');
+
+        const lines = await db.query(
+            `SELECT id, fulfillment_status FROM order_lines WHERE _ord_no = $1 ORDER BY ln_no`, [order.ord_no]);
+        const [shippedLn, backLn] = lines.rows;
+
+        const good = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'x', lines: [{ order_line_id: shippedLn.id, qty: 1 }] });
+        expect(good.status).toBe(201);
+
+        const bad = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'x', lines: [{ order_line_id: backLn.id, qty: 1 }] });
+        expect(bad.status).toBe(409);
+        expect(bad.body.outcome.message).toMatch(/has not shipped/);
+    });
+
+    test('given the return window has passed then customers are refused but staff may still open one', async () => {
+        const { user, order, line } = await shippedOrder('WINDOW');
+        await db.query(
+            `UPDATE order_status_history SET _create_ts = NOW() - INTERVAL '31 days' WHERE _ord_no = $1`,
+            [order.ord_no]);
+
+        const late = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'late', lines: [{ order_line_id: line.id, qty: 1 }] });
+        expect(late.status).toBe(409);
+        expect(late.body.outcome.message).toMatch(/return window/);
+
+        // Staff (rma:manage) can override the window — it is policy, not integrity.
+        const staff = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${adminToken()}`)
+            .send({ ord_no: order.ord_no, reason: 'goodwill exception', lines: [{ order_line_id: line.id, qty: 1 }] });
+        expect(staff.status).toBe(201);
+    });
+
+    test('given no explicit amount then the refund is what the customer paid, discount prorated', async () => {
+        // 10% promo: 2 × 15 = 30 subtotal, 3 discount → customer paid 27 for the goods.
+        const code = `RMADEF-${RUN}`;
+        await makePromo({ code, name: 'RMA default', promo_type: 'percent', value: 10 });
+        const v = await makeVariant('REFDEF', 15);
+        const user = await makeShopper('refdef', [{ variantNo: v, qty: 2 }]);
+        const placed = await checkout(user, { promoCode: code });
+        const order = placed.body.content.order;
+        await request(app).post('/api/v1/payments/fake/confirm')
+            .send({ intent_ref: order.payment.intent_ref, outcome: 'authorized' });
+        await request(app).post(`/api/v1/orders/${order.ord_no}/ship`)
+            .set('Authorization', `Bearer ${adminToken()}`);
+        const line = (await db.query(
+            `SELECT id FROM order_lines WHERE _ord_no = $1`, [order.ord_no])).rows[0];
+
+        const req1 = await request(app).post('/api/v1/rmas')
+            .set('Authorization', `Bearer ${token(user)}`)
+            .send({ ord_no: order.ord_no, reason: 'full return', lines: [{ order_line_id: line.id, qty: 2 }] });
+        const rmaNo = req1.body.content.rma_no;
+
+        // The detail advertises the suggestion to Finance.
+        const detail = await request(app).get(`/api/v1/rmas/${rmaNo}`)
+            .set('Authorization', `Bearer ${adminToken()}`);
+        expect(Number(detail.body.content.rma.suggested_refund)).toBe(27);
+
+        await request(app).put(`/api/v1/rmas/${rmaNo}/status`)
+            .set('Authorization', `Bearer ${adminToken()}`).send({ status: 'approved' });
+        const rmaLines = await db.query(`SELECT id FROM rma_lines WHERE _rma_no = $1`, [rmaNo]);
+        await request(app).post(`/api/v1/rmas/${rmaNo}/receive`)
+            .set('Authorization', `Bearer ${adminToken()}`)
+            .send({ lines: [{ rma_line_id: rmaLines.rows[0].id, restock: true }] });
+
+        const refund = await request(app).post(`/api/v1/rmas/${rmaNo}/refund`)
+            .set('Authorization', `Bearer ${adminToken()}`)
+            .send({});   // no amount → policy default
+        expect(refund.status).toBe(201);
+        expect(Number(refund.body.content.amount)).toBe(27);
+
+        const row = await db.query(`SELECT amount, status FROM refunds WHERE _ord_no = $1`, [order.ord_no]);
+        expect(Number(row.rows[0].amount)).toBe(27);
+        expect(row.rows[0].status).toBe('completed');
+    });
+
     test('given a customer without rma:manage then staff endpoints are 403', async () => {
         const { user, order, line } = await shippedOrder('RMA5');
         const req1 = await request(app).post('/api/v1/rmas')

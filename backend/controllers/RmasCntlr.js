@@ -99,12 +99,14 @@ const RmasCntlr = function () {
             .catch(err => next({ status: err.status || 500, message: err.message }));
     }
 
-    // POST /api/v1/rmas/:rma_no/refund — Finance credits the sale (refunds:create)
+    // POST /api/v1/rmas/:rma_no/refund — Finance credits the sale (refunds:create).
+    // amount is optional: it defaults to what the customer paid for the
+    // returned lines (prorated discount and tax included).
     function refund(req, res, next) {
         const rmaNo = parseInt(req.params.rma_no, 10);
         if (isNaN(rmaNo)) return next({ status: 400, message: 'Invalid rma_no' });
         const { amount, reason } = req.body || {};
-        RmaService.refund(rmaNo, Number(amount), reason || 'RMA refund', req.user.id)
+        RmaService.refund(rmaNo, amount != null ? Number(amount) : null, reason || 'RMA refund', req.user.id)
             .then(result => {
                 res.locals.results = result;
                 res.locals.status  = 201;

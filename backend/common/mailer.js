@@ -133,6 +133,29 @@ function sendOrderEvent(event, order, recipient) {
 }
 
 /**
+ * Returns (RMA) lifecycle notification.
+ * Fire-and-forget at call sites — callers should .catch() but not await.
+ *
+ * @param {string} event - 'rma_requested' | 'rma_new' | 'rma_approved' |
+ *                         'rma_rejected' | 'rma_received' | 'rma_refunded'
+ * @param {{rma_no:number, ord_no:number}} rma
+ * @param {string} recipient - destination address
+ */
+function sendRmaEvent(event, rma, recipient) {
+    const subjects = {
+        rma_requested: `Return #${rma.rma_no} received — we're reviewing it`,
+        rma_new:       `New return #${rma.rma_no} needs review`,
+        rma_approved:  `Return #${rma.rma_no} approved — please send the items back`,
+        rma_rejected:  `Return #${rma.rma_no} could not be accepted`,
+        rma_received:  `Return #${rma.rma_no} arrived — your refund is being processed`,
+        rma_refunded:  `Return #${rma.rma_no} refunded`,
+    };
+    const subject = subjects[event] || `Return #${rma.rma_no}: ${event}`;
+    const text = `${subject}\n\nReturn: ${rma.rma_no}\nOrder: ${rma.ord_no}`;
+    return send({ to: recipient, subject, text });
+}
+
+/**
  * Back-in-stock notification for a customer who asked to be told.
  * Fire-and-forget at call sites — callers should .catch() but not await.
  *
@@ -146,4 +169,4 @@ function sendBackInStock(recipient, product = {}) {
     return send({ to: recipient, subject, text });
 }
 
-module.exports = { sendOTP, notify, sendOrderEvent, sendBackInStock, NOTIFICATION_EVENTS };
+module.exports = { sendOTP, notify, sendOrderEvent, sendRmaEvent, sendBackInStock, NOTIFICATION_EVENTS };

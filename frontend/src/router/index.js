@@ -8,6 +8,7 @@ import ProductsAdminView from '../views/admin/ProductsAdminView.vue';
 import InventoryAdminView from '../views/admin/InventoryAdminView.vue';
 import StockTransfersView from '../views/admin/StockTransfersView.vue';
 import PurchaseOrdersView from '../views/admin/PurchaseOrdersView.vue';
+import RmasAdminView from '../views/admin/RmasAdminView.vue';
 import OrdersAdminView from '../views/admin/OrdersAdminView.vue';
 import ReportsView from '../views/admin/ReportsView.vue';
 import PromotionsView from '../views/admin/PromotionsView.vue';
@@ -43,6 +44,8 @@ const router = createRouter({
           meta: { requiresPerm: ['inventory:transfer'] } },
         { path: 'admin/purchasing', name: 'admin-purchasing', component: PurchaseOrdersView,
           meta: { requiresPerm: ['purchasing:manage', 'inventory:receive'] } },
+        { path: 'admin/rmas',       name: 'admin-rmas',       component: RmasAdminView,
+          meta: { requiresPerm: ['rma:manage', 'refunds:create'] } },
         { path: 'admin/orders',     name: 'admin-orders',     component: OrdersAdminView,
           meta: { requiresPerm: ['orders:read'] } },
         { path: 'admin/reports',    name: 'admin-reports',    component: ReportsView,

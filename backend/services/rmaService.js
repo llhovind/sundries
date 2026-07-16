@@ -1,8 +1,13 @@
 'use strict';
 
 const { DB: db, withTransaction } = require('../common/db');
+const Settings = require('../common/settings');
 const InventoryTransactions = require('../models/inventoryTransactions');
 const PaymentsService       = require('./paymentsService');
+
+function log(level, msg, extra = {}) {
+    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
+}
 
 /**
  * RmaService — returns workflow.
@@ -15,17 +20,26 @@ const PaymentsService       = require('./paymentsService');
  *   bought, cumulatively across RMAs), and a rejected request must hand its
  *   claim back. If it could drift into the shared 'closed' state the two
  *   would be indistinguishable.
- * - Customers open RMAs against their own shipped orders; staff (rma:manage)
- *   drive the rest of the lifecycle.
+ * - Eligibility is per LINE, not per order: only lines that have actually
+ *   shipped are returnable, so partially shipped orders can return what went
+ *   out while backordered lines stay untouchable.
+ * - Return window: customers must request within app_settings
+ *   'returns.window_days' (default 30) of the order's FIRST shipment; <= 0
+ *   disables the limit. Staff (rma:manage) may open a return at any time —
+ *   the window is customer policy, not a data constraint.
+ * - Refund amount defaults to what the customer actually paid for the
+ *   returned lines: line value minus the prorated order discount plus the
+ *   prorated tax (shipping is not refunded — the service was rendered).
+ *   Finance may override the amount; the payments-side cumulative guard
+ *   still caps the total at the captured amount.
  * - Receiving with restock=true writes RET ledger rows at the line's original
  *   FIFO cost (read off the order's OUT transaction), so returned goods come
  *   back on the books at what they left for — valuation stays honest.
- * - The refund step delegates to PaymentsService.refundOrder (refunds:create,
- *   Finance) and links the refund to the RMA.
+ * - Every customer-visible transition sends mail through the job queue.
  *
  * v1 boundaries (extend when the business needs them): no return shipping
  * labels, no partial-quantity receiving per line (a line is received whole),
- * no automatic refund amount calculation — Finance enters the amount.
+ * no restocking fees.
  */
 const RmaService = (function () {
 
@@ -38,7 +52,7 @@ const RmaService = (function () {
         closed:    [],
     };
 
-    return { request, updateStatus, receive, refund, findOne, list };
+    return { request, updateStatus, receive, refund, findOne, list, suggestedRefund };
 
     /**
      * Customer (or staff) opens an RMA for lines of a shipped order.
@@ -56,15 +70,36 @@ const RmaService = (function () {
             const ownerClause = staff ? '' : 'AND c.user_id = $2';
             const params      = staff ? [ord_no] : [ord_no, userId];
             const ordRes = await client.query(
-                `SELECT o.ord_no, o.status FROM orders o
+                `SELECT o.ord_no, o.status, o.placed_at FROM orders o
                  JOIN customers c ON c.id = o._customer_id
                  WHERE o.ord_no = $1 ${ownerClause}`,
                 params
             );
             const order = ordRes.rows[0];
             if (!order) throw Object.assign(new Error('Order not found'), { status: 404 });
-            if (!['shipped', 'completed'].includes(order.status)) {
+            if (!['shipped', 'partially_shipped', 'completed'].includes(order.status)) {
                 throw Object.assign(new Error('Returns are only accepted for shipped orders'), { status: 409 });
+            }
+
+            // Return window — customer policy, staff exempt. Measured from the
+            // first shipment (status history); placed_at is the fallback for
+            // orders that predate history rows.
+            if (!staff) {
+                const windowDays = await Settings.getNumber('returns.window_days', 30);
+                if (windowDays > 0) {
+                    const hist = await client.query(
+                        `SELECT MIN(_create_ts) AS shipped_at FROM order_status_history
+                         WHERE _ord_no = $1 AND to_status IN ('shipped', 'partially_shipped')`,
+                        [ord_no]);
+                    const shippedAt = hist.rows[0].shipped_at || order.placed_at;
+                    const closesAt  = new Date(shippedAt).getTime() + windowDays * 86400000;
+                    if (Date.now() > closesAt) {
+                        throw Object.assign(
+                            new Error(`The return window for this order has closed ` +
+                                      `(${windowDays} days from shipment)`),
+                            { status: 409 });
+                    }
+                }
             }
 
             const rmaRes = await client.query(
@@ -86,6 +121,13 @@ const RmaService = (function () {
                 const line = lineRes.rows[0];
                 if (!line) throw Object.assign(
                     new Error(`Line ${ln.order_line_id} does not belong to order ${ord_no}`), { status: 400 });
+                // Only goods that actually went out are returnable — on a
+                // partially shipped order the backordered lines never left.
+                if (line.fulfillment_status !== 'shipped') {
+                    throw Object.assign(
+                        new Error(`Line ${ln.order_line_id} has not shipped and cannot be returned`),
+                        { status: 409 });
+                }
                 if (!(ln.qty > 0) || Number(ln.qty) > Number(line.qty)) {
                     throw Object.assign(
                         new Error(`Return qty for line ${ln.order_line_id} must be between 0 and ${line.qty}`),
@@ -118,6 +160,10 @@ const RmaService = (function () {
                 );
             }
             return rmaNo;
+        }).then(rmaNo => {
+            notify(rmaNo, 'rma_requested');
+            notifyStaff(rmaNo);
+            return rmaNo;
         });
     }
 
@@ -145,6 +191,8 @@ const RmaService = (function () {
             throw Object.assign(
                 new Error(`Cannot transition RMA from '${cur.rows[0].status}' to '${toStatus}'`), { status: 409 });
         }
+        if (toStatus === 'approved') notify(rmaNo, 'rma_approved');
+        if (toStatus === 'rejected') notify(rmaNo, 'rma_rejected');
         return res.rows[0];
     }
 
@@ -218,12 +266,53 @@ const RmaService = (function () {
                 [rmaNo, userId]
             );
             return { rma_no: rmaNo, status: 'received', restocked_transactions: restocked };
+        }).then(result => {
+            notify(rmaNo, 'rma_received');
+            return result;
         });
     }
 
     /**
-     * Finance refunds a received RMA. Delegates to the payments refund flow
-     * and links the refund to this RMA.
+     * What the customer actually paid for this RMA's lines: returned value
+     * at the order's line prices, minus the prorated share of the order
+     * discount, plus the prorated share of tax. Shipping stays — the
+     * delivery happened. Computed in integer cents (pg numerics arrive as
+     * floats; boundary sums must be exact).
+     *
+     * @returns {Promise<number|null>} suggested amount, or null for an
+     *          unknown RMA
+     */
+    async function suggestedRefund(rmaNo) {
+        const res = await db.query(
+            `SELECT o.subtotal, o.discount_amt, o.tax,
+                    COALESCE(SUM(rl.qty * ol.unit_price), 0) AS returned_value
+             FROM rmas r
+             JOIN orders o ON o.ord_no = r._ord_no
+             LEFT JOIN rma_lines rl   ON rl._rma_no = r.rma_no
+             LEFT JOIN order_lines ol ON ol.id = rl._order_line_id
+             WHERE r.rma_no = $1
+             GROUP BY o.ord_no`,
+            [rmaNo]);
+        if (!res.rows.length) return null;
+
+        const toCents  = n => Math.round(Number(n) * 100);
+        const subtotal = toCents(res.rows[0].subtotal);
+        const discount = toCents(res.rows[0].discount_amt);
+        const tax      = toCents(res.rows[0].tax);
+        const value    = toCents(res.rows[0].returned_value);
+        if (value === 0) return 0;
+
+        const discountShare = subtotal > 0 ? Math.round(discount * value / subtotal) : 0;
+        const taxedBase     = subtotal - discount;
+        const taxShare      = taxedBase > 0 ? Math.round(tax * (value - discountShare) / taxedBase) : 0;
+        return (value - discountShare + taxShare) / 100;
+    }
+
+    /**
+     * Finance refunds a received RMA. The amount defaults to what the
+     * customer paid for the returned lines (see suggestedRefund); an
+     * explicit amount overrides it. Delegates to the payments refund flow —
+     * whose cumulative guard still applies — and links the refund to this RMA.
      */
     async function refund(rmaNo, amount, reason, userId) {
         const rmaRes = await db.query(`SELECT _ord_no, status FROM rmas WHERE rma_no = $1`, [rmaNo]);
@@ -233,14 +322,17 @@ const RmaService = (function () {
             throw Object.assign(new Error('Only received RMAs can be refunded'), { status: 409 });
         }
 
-        const result = await PaymentsService.refundOrder(rma._ord_no, amount, reason, userId);
+        const refundAmount = amount != null ? Number(amount) : await suggestedRefund(rmaNo);
+
+        const result = await PaymentsService.refundOrder(rma._ord_no, refundAmount, reason, userId);
         await db.query(`UPDATE refunds SET _rma_no = $2 WHERE refund_no = $1`, [result.refund_no, rmaNo]);
         await db.query(
             `UPDATE rmas SET status = 'refunded', _modify_ts = NOW(), _modify_user_id = $2
              WHERE rma_no = $1 AND status = 'received'`,
             [rmaNo, userId]
         );
-        return { ...result, rma_no: rmaNo };
+        notify(rmaNo, 'rma_refunded');
+        return { ...result, amount: refundAmount, rma_no: rmaNo };
     }
 
     function findOne(rmaNo, { userId = null, staff = false } = {}) {
@@ -264,7 +356,47 @@ const RmaService = (function () {
                  ORDER BY ol.ln_no`,
                 [rmaNo]
             ).then(res => res.rows),
-        ]).then(([rma, lines]) => rma ? { ...rma, lines } : null);
+            suggestedRefund(rmaNo),
+        ]).then(([rma, lines, suggested]) =>
+            rma ? { ...rma, lines, suggested_refund: suggested } : null);
+    }
+
+    // ── Notifications (post-commit, fire-and-forget) ────────────────────────
+
+    /** Customer email for a lifecycle event, through the job queue. */
+    function notify(rmaNo, event) {
+        const Jobs = require('./jobs');   // lazy: avoids a require cycle via jobs' handlers
+        db.query(
+            `SELECT r.rma_no, r._ord_no, o.email FROM rmas r
+             JOIN orders o ON o.ord_no = r._ord_no WHERE r.rma_no = $1`, [rmaNo])
+            .then(res => {
+                const rma = res.rows[0];
+                if (!rma) return;
+                return Jobs.send(Jobs.QUEUES.EMAIL, {
+                    event, to: rma.email,
+                    rma: { rma_no: rma.rma_no, ord_no: rma._ord_no },
+                });
+            })
+            .catch(err => log('error', 'rma notification failed', { rma_no: rmaNo, event, error: err.message }));
+    }
+
+    /** New request — tell everyone who can work the returns queue. */
+    function notifyStaff(rmaNo) {
+        const Jobs = require('./jobs');
+        const Rbac = require('../models/rbac');
+        db.query(`SELECT rma_no, _ord_no FROM rmas WHERE rma_no = $1`, [rmaNo])
+            .then(res => {
+                const rma = res.rows[0];
+                if (!rma) return;
+                return Rbac.findUsersWithPermission('rma:manage').then(users => {
+                    users.forEach(u =>
+                        Jobs.send(Jobs.QUEUES.EMAIL, {
+                            event: 'rma_new', to: u.email,
+                            rma: { rma_no: rma.rma_no, ord_no: rma._ord_no },
+                        }).catch(err => log('error', 'rma staff notification failed', { to: u.email, error: err.message })));
+                });
+            })
+            .catch(err => log('error', 'rma staff notification failed', { rma_no: rmaNo, error: err.message }));
     }
 
     function list({ status = null, userId = null, staff = false, limit = 25, offset = 0 } = {}) {

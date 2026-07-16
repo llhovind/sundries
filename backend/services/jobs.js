@@ -51,6 +51,8 @@ const Jobs = (function () {
             const mailer = require('../common/mailer');
             if (data.event === 'back_in_stock') {
                 await mailer.sendBackInStock(data.to, data.product);
+            } else if (data.event && data.event.startsWith('rma_')) {
+                await mailer.sendRmaEvent(data.event, data.rma, data.to);
             } else {
                 await mailer.sendOrderEvent(data.event, data.order, data.to);
             }
