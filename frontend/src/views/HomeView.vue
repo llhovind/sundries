@@ -33,6 +33,7 @@ async function logout() {
       <router-link v-if="auth.hasPerm('catalog:write')" to="/admin/products">Products</router-link>
       <router-link v-if="auth.hasPerm('inventory:read')" to="/admin/inventory">Inventory</router-link>
       <router-link v-if="auth.hasPerm('inventory:transfer')" to="/admin/transfers">Transfers</router-link>
+      <router-link v-if="auth.hasPerm('purchasing:manage', 'inventory:receive')" to="/admin/purchasing">Purchasing</router-link>
       <router-link v-if="auth.hasPerm('reports:view', 'reports:cogs')" to="/admin/reports">Reports</router-link>
       <router-link v-if="auth.hasPerm('promotions:manage')" to="/admin/promotions">Promotions</router-link>
       <router-link v-if="auth.hasPerm('catalog:write')" to="/categories">Categories</router-link>

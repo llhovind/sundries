@@ -38,6 +38,7 @@ app.use('/api/v1/promotions',     optionalAuth, require('./routes/promotions'));
 
 // Protected routes
 app.use('/api/v1/inventory',      auth, require('./routes/inventory'));
+app.use('/api/v1/purchase-orders', auth, require('./routes/purchaseOrders'));
 app.use('/api/v1/vendors',        auth, require('./routes/vendors'));
 app.use('/api/v1/customers',      auth, require('./routes/customers'));
 app.use('/api/v1/users',          auth, require('./routes/users'));
