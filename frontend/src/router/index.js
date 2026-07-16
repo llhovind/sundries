@@ -48,7 +48,7 @@ const router = createRouter({
         { path: 'admin/rmas',       name: 'admin-rmas',       component: RmasAdminView,
           meta: { requiresPerm: ['rma:manage', 'refunds:create'] } },
         { path: 'admin/orders',     name: 'admin-orders',     component: OrdersAdminView,
-          meta: { requiresPerm: ['orders:read'] } },
+          meta: { requiresPerm: ['orders:read', 'orders:fulfill'] } },
         { path: 'admin/reports',    name: 'admin-reports',    component: ReportsView,
           meta: { requiresPerm: ['reports:view', 'reports:cogs'] } },
         { path: 'admin/promotions', name: 'admin-promotions', component: PromotionsView,

@@ -3,7 +3,9 @@ import { ref, computed } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 import CartSidebar from '@/components/CartSidebar.vue';
+import StaffSidebar from '@/components/StaffSidebar.vue';
 import ProfileModal from '@/components/ProfileModal.vue';
+import { visibleNavGroups } from '@/config/navigation';
 
 const auth        = useAuthStore();
 const router      = useRouter();
@@ -14,6 +16,10 @@ const displayName = computed(() =>
 );
 
 const isShopper = computed(() => !auth.isStaff());
+
+const staffNavGroups = computed(() =>
+    auth.isStaff() ? visibleNavGroups(router.getRoutes(), auth.hasPerm) : []
+);
 
 async function logout() {
     await auth.logout();
@@ -27,20 +33,6 @@ async function logout() {
     <nav>
       <router-link to="/shop">Shop</router-link>
       <router-link v-if="isShopper && auth.isLoggedIn()" to="/orders">My Orders</router-link>
-
-      <span v-if="auth.isStaff()" class="nav-sep" />
-      <router-link v-if="auth.hasPerm('orders:read', 'orders:fulfill')" to="/admin/orders">Orders</router-link>
-      <router-link v-if="auth.hasPerm('catalog:write')" to="/admin/products">Products</router-link>
-      <router-link v-if="auth.hasPerm('inventory:read')" to="/admin/inventory">Inventory</router-link>
-      <router-link v-if="auth.hasPerm('inventory:transfer')" to="/admin/transfers">Transfers</router-link>
-      <router-link v-if="auth.hasPerm('purchasing:manage', 'inventory:receive')" to="/admin/purchasing">Purchasing</router-link>
-      <router-link v-if="auth.hasPerm('rma:manage', 'refunds:create')" to="/admin/rmas">Returns</router-link>
-      <router-link v-if="auth.hasPerm('reports:view', 'reports:cogs')" to="/admin/reports">Reports</router-link>
-      <router-link v-if="auth.hasPerm('promotions:manage')" to="/admin/promotions">Promotions</router-link>
-      <router-link v-if="auth.hasPerm('catalog:write')" to="/categories">Categories</router-link>
-      <router-link v-if="auth.hasPerm('customers:read')" to="/customers">Customers</router-link>
-      <router-link v-if="auth.hasPerm('users:manage')" to="/users">Users</router-link>
-      <router-link v-if="auth.hasPerm('roles:manage')" to="/admin/roles">Roles</router-link>
     </nav>
     <span v-if="auth.user" class="user-info">
       <button v-if="isShopper" class="username-btn" @click="showProfile = true">{{ displayName }}</button>
@@ -53,8 +45,9 @@ async function logout() {
     </span>
     <ProfileModal v-if="showProfile" @close="showProfile = false" />
   </header>
-  <aside :class="{ collapsed: !isShopper }">
+  <aside :class="{ 'staff-side': !isShopper, collapsed: !isShopper && !staffNavGroups.length }">
     <CartSidebar v-if="isShopper" />
+    <StaffSidebar v-else-if="staffNavGroups.length" :groups="staffNavGroups" />
   </aside>
   <main>
     <router-view />
@@ -88,13 +81,6 @@ header {
     gap: 0.15rem;
     flex: 1;
     flex-wrap: wrap;
-
-    .nav-sep {
-      width: 1px;
-      height: 1.2rem;
-      background: var(--color-border-strong);
-      margin: 0 0.4rem;
-    }
 
     a {
       color: var(--color-text);
@@ -133,6 +119,7 @@ aside {
   border-radius: 10px;
   min-width: 250px;
 
+  &.staff-side { min-width: 175px; }
   &.collapsed { min-width: 0; width: 0; border: none; }
 }
 
