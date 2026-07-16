@@ -120,15 +120,30 @@ function notify(event, cart, recipient) {
  */
 function sendOrderEvent(event, order, recipient) {
     const subjects = {
-        order_placed:  `Order #${order.ord_no} received — awaiting payment`,
-        order_paid:    `Order #${order.ord_no} confirmed`,
-        order_shipped: `Order #${order.ord_no} has shipped`,
-        order_failed:  `Order #${order.ord_no} could not be completed`,
-        new_order:     `New order #${order.ord_no} needs fulfillment`,
+        order_placed:    `Order #${order.ord_no} received — awaiting payment`,
+        order_paid:      `Order #${order.ord_no} confirmed`,
+        order_shipped:   `Order #${order.ord_no} has shipped`,
+        order_failed:    `Order #${order.ord_no} could not be completed`,
+        new_order:       `New order #${order.ord_no} needs fulfillment`,
+        backorder_ready: `Order #${order.ord_no} backordered items arrived — ready to ship`,
     };
     const subject = subjects[event] || `Order #${order.ord_no}: ${event}`;
     const text = `${subject}\n\nOrder: ${order.ord_no}\nTotal: ${order.total} ${order.currency || ''}`.trim();
     return send({ to: recipient, subject, text });
 }
 
-module.exports = { sendOTP, notify, sendOrderEvent, NOTIFICATION_EVENTS };
+/**
+ * Back-in-stock notification for a customer who asked to be told.
+ * Fire-and-forget at call sites — callers should .catch() but not await.
+ *
+ * @param {string} recipient - destination address
+ * @param {{sku:string, name:string}} product
+ */
+function sendBackInStock(recipient, product = {}) {
+    const subject = `${product.name || 'An item you wanted'} is back in stock`;
+    const text = `${subject}\n\nItem: ${product.name || ''} (${product.sku || ''})\n` +
+                 `It sells first come, first served — order soon to be sure of yours.`;
+    return send({ to: recipient, subject, text });
+}
+
+module.exports = { sendOTP, notify, sendOrderEvent, sendBackInStock, NOTIFICATION_EVENTS };

@@ -12,12 +12,17 @@ onMounted(() => store.getAll().catch(() => {}));
 
 const displayFields = ['ord_no', 'placed_at', 'customer_name', 'status', 'total'];
 
-const STATUSES = ['pending_payment', 'paid', 'processing', 'shipped', 'completed', 'cancelled', 'payment_failed'];
+const STATUSES = ['pending_payment', 'paid', 'processing', 'partially_shipped', 'shipped',
+                  'completed', 'cancelled', 'payment_failed'];
 
 const STATUS_PILL = {
-    pending_payment: 'warn', paid: 'accent', processing: 'accent',
+    pending_payment: 'warn', paid: 'accent', processing: 'accent', partially_shipped: 'warn',
     shipped: 'ok', completed: 'ok', cancelled: '', payment_failed: 'danger',
 };
+
+// partially_shipped: the restock job has filled (some) backorders — shipping
+// again sends whatever is now reserved.
+const SHIPPABLE = ['paid', 'processing', 'partially_shipped'];
 
 const mutationError = ref('');
 const busy          = ref(null);
@@ -88,7 +93,7 @@ async function ship(ordNo) {
       </template>
 
       <template #row-actions="{ row }">
-        <button v-if="row.status === 'paid' && auth.hasPerm('orders:fulfill')"
+        <button v-if="SHIPPABLE.includes(row.status) && auth.hasPerm('orders:fulfill')"
                 class="btn btn-primary ship" :disabled="busy === row.ord_no"
                 @click="ship(row.ord_no)">
           {{ busy === row.ord_no ? 'Shipping…' : 'Ship + capture' }}

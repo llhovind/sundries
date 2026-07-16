@@ -19,6 +19,7 @@ function log(level, msg, extra = {}) {
  *
  * Scheduled work:
  *   reservation-sweep    every minute — release expired holds, fail stale orders
+ *   restock-arrivals     every minute — fill backorders, send back-in-stock mail
  *   search-outbox        every minute — drain catalog changes into the search index
  *   partition-maintenance daily 03:10 — pre-create ledger partitions when enabled
  *
@@ -36,6 +37,7 @@ const Jobs = (function () {
         EMAIL:        'email',
         ORDER_SCREEN: 'order-screen',
         SWEEP:        'reservation-sweep',
+        RESTOCK:      'restock-arrivals',
         OUTBOX:       'search-outbox',
         PARTITION:    'partition-maintenance',
         ROLLUP:       'daily-rollup',
@@ -47,7 +49,11 @@ const Jobs = (function () {
     const HANDLERS = {
         [QUEUES.EMAIL]: async (data) => {
             const mailer = require('../common/mailer');
-            await mailer.sendOrderEvent(data.event, data.order, data.to);
+            if (data.event === 'back_in_stock') {
+                await mailer.sendBackInStock(data.to, data.product);
+            } else {
+                await mailer.sendOrderEvent(data.event, data.order, data.to);
+            }
         },
         [QUEUES.ORDER_SCREEN]: async (data) => {
             const FraudService = require('./fraudService');
@@ -58,6 +64,11 @@ const Jobs = (function () {
             const PaymentsService = require('./paymentsService');
             const { released, failed } = await PaymentsService.sweepExpired();
             if (released || failed) log('info', 'reservation sweep', { released, failed });
+        },
+        [QUEUES.RESTOCK]: async () => {
+            const RestockService = require('./restockService');
+            const { fulfilled, notified } = await RestockService.processArrivals();
+            if (fulfilled || notified) log('info', 'restock arrivals processed', { fulfilled, notified });
         },
         [QUEUES.OUTBOX]: async () => {
             const { getSearchProvider } = require('./search');
@@ -125,6 +136,7 @@ const Jobs = (function () {
         }
 
         await instance.schedule(QUEUES.SWEEP,     '* * * * *');
+        await instance.schedule(QUEUES.RESTOCK,   '* * * * *');
         await instance.schedule(QUEUES.OUTBOX,    '* * * * *');
         await instance.schedule(QUEUES.PARTITION, '10 3 * * *');
         await instance.schedule(QUEUES.ROLLUP,    '30 0 * * *');

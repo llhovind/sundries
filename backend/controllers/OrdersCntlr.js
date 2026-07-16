@@ -58,9 +58,12 @@ const OrdersCntlr = function () {
         const ordNo = parseInt(req.params.ord_no, 10);
         if (isNaN(ordNo)) return next({ status: 400, message: 'Invalid order number' });
         try {
-            res.locals.results = await FulfillmentService.shipOrder(ordNo, req.user.id);
+            const result = await FulfillmentService.shipOrder(ordNo, req.user.id);
+            res.locals.results = result;
             res.locals.status  = 200;
-            res.locals.message = 'Order shipped and payment captured';
+            res.locals.message = result.status === 'partially_shipped'
+                ? 'Ready lines shipped — backordered items remain outstanding'
+                : 'Order shipped and payment captured';
             next();
         } catch (err) {
             next({ status: err.status || 500, message: err.message || 'Ship failed' });
