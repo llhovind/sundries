@@ -32,23 +32,27 @@ function token(perms, roles = ['finance']) {
     );
 }
 
-async function makeOrderShell(email) {
+// `day` (YYYY-MM-DD, optional) backdates the row to noon on that day —
+// the ledger is append-only, so historic fixtures must be dated at insert.
+async function makeOrderShell(email, day = null) {
     const cust = await db.query(
         `INSERT INTO customers (name, email, is_guest) VALUES ('Report Test', $1, TRUE) RETURNING id`,
         [email]);
     const ord = await db.query(
-        `INSERT INTO orders (_customer_id, email, subtotal, total, status)
-         VALUES ($1, $2, 0, 0, 'paid') RETURNING ord_no`,
-        [cust.rows[0].id, email]);
+        `INSERT INTO orders (_customer_id, email, subtotal, total, status, placed_at)
+         VALUES ($1, $2, 0, 0, 'paid',
+                 COALESCE($3::date + interval '12 hours', NOW())) RETURNING ord_no`,
+        [cust.rows[0].id, email, day]);
     return Number(ord.rows[0].ord_no);
 }
 
-async function sell(variantNo, qty, unitPrice, ordNo) {
+async function sell(variantNo, qty, unitPrice, ordNo, day = null) {
     await db.query(
         `INSERT INTO inventory_transactions
-            (_trn_type, _variant_no, _warehouse_no, qty, unit_price, _lnk_table, _lnk_id)
-         VALUES ('OUT', $1, $2, $3, $4, 'orders', $5)`,
-        [variantNo, wh, -qty, unitPrice, ordNo]);
+            (_trn_type, _variant_no, _warehouse_no, qty, unit_price, _lnk_table, _lnk_id, _trn_dt)
+         VALUES ('OUT', $1, $2, $3, $4, 'orders', $5,
+                 COALESCE($6::date + interval '12 hours', NOW()))`,
+        [variantNo, wh, -qty, unitPrice, ordNo, day]);
 }
 
 beforeAll(async () => {
@@ -169,19 +173,52 @@ describe('given active checkouts when reservations are reported then held stock 
 
 describe('given the nightly rollup when recomputed then the summary reflects the ledger', () => {
 
-    test('given rollupDay(today) then the facts row carries our revenue/cogs and is idempotent', async () => {
-        await Reports.rollupDay(TODAY);
-        const first = await Reports.salesSummary({ from: TODAY, to: TODAY });
-        expect(first).toHaveLength(1);
-        const row = first[0];
-        expect(Number(row.revenue)).toBeGreaterThanOrEqual(96 + 40);
-        expect(Number(row.cogs)).toBeGreaterThanOrEqual(26 + 20);
-        expect(Number(row.shrinkage_cost)).toBeGreaterThanOrEqual(9);
-        expect(Number(row.gross_margin)).toBe(Number((row.revenue - row.cogs).toFixed(2)));
+    // The rollup aggregates a whole calendar day, and parallel suites write
+    // sales into "today" constantly — asserting against today is a race. This
+    // test instead seeds a private HISTORIC day (derived from the run id, so
+    // repeated runs land on different days) and asserts exact deltas between
+    // rollups, which also makes it immune to leftovers from any prior run
+    // that happened to hit the same day (the ledger is append-only).
+    const PRIVATE_DAY = new Date(Date.UTC(1900, 0, 1) + (RUN % 30000) * 86400000)
+        .toISOString().slice(0, 10);
 
-        await Reports.rollupDay(TODAY);   // idempotent recompute
-        const second = await Reports.salesSummary({ from: TODAY, to: TODAY });
-        expect(Number(second[0].revenue)).toBe(Number(row.revenue));
+    function factsFor(day) {
+        return Reports.salesSummary({ from: day, to: day }).then(rows => rows[0]);
+    }
+
+    test('given a backdated day then the facts row moves by exactly the seeded ledger activity, idempotently', async () => {
+        await Reports.rollupDay(PRIVATE_DAY);
+        const before = await factsFor(PRIVATE_DAY);   // zeros row or prior-run leftovers
+
+        // Private FIFO layer dated on the historic day: it is the oldest layer
+        // for variant A, so the OUT and ADJ below consume exactly it —
+        // 10 sold @ cost $4 (COGS 40), 2 written off @ $4 (shrinkage 8).
+        const ordNo = await makeOrderShell(`rpt-roll-${RUN}@example.com`, PRIVATE_DAY);
+        await db.query(
+            `INSERT INTO inventory_transactions
+                (_trn_type, _variant_no, _warehouse_no, qty, unit_cost, _trn_dt)
+             VALUES ('IN', $1, $2, 12, 4, $3::date + interval '12 hours')`,
+            [variantA, wh, PRIVATE_DAY]);
+        await sell(variantA, 10, 7, ordNo, PRIVATE_DAY);
+        await db.query(
+            `INSERT INTO inventory_transactions
+                (_trn_type, _variant_no, _warehouse_no, qty, reason_code, _trn_dt)
+             VALUES ('ADJ', $1, $2, -2, $3, $4::date + interval '12 hours')`,
+            [variantA, wh, `rollup-${RUN}`, PRIVATE_DAY]);
+
+        await Reports.rollupDay(PRIVATE_DAY);
+        const after = await factsFor(PRIVATE_DAY);
+
+        expect(Number(after.orders_placed)  - Number(before.orders_placed)).toBe(1);
+        expect(Number(after.units_sold)     - Number(before.units_sold)).toBe(10);
+        expect(Number(after.revenue)        - Number(before.revenue)).toBe(70);     // 10 × $7
+        expect(Number(after.cogs)           - Number(before.cogs)).toBe(40);        // 10 × $4
+        expect(Number(after.shrinkage_cost) - Number(before.shrinkage_cost)).toBe(8); // 2 × $4
+        expect(Number(after.gross_margin)).toBe(Number((after.revenue - after.cogs).toFixed(2)));
+
+        // Idempotency: recomputing with an unchanged ledger changes nothing.
+        await Reports.rollupDay(PRIVATE_DAY);
+        expect(await factsFor(PRIVATE_DAY)).toEqual(after);
     });
 });
 
