@@ -329,6 +329,70 @@ describe('given a placed order when the provider confirms payment then stock iss
         expect(out.rows[0].n).toBe(1);   // stock issued exactly once
     });
 
+    test('given the reservation expired just before payment confirms then the hold is recovered and stock still issues', async () => {
+        const { order } = await placedOrder('TTLRACE');
+
+        // Simulate the sweeper winning the race by milliseconds: the hold is
+        // expired but the order is still fresh and pending_payment.
+        await db.query(
+            `UPDATE inventory_reservations SET expires_at = NOW() - INTERVAL '1 second'
+             WHERE _ord_no = $1`, [order.ord_no]);
+        const InventoryService = require('../services/inventoryService');
+        await InventoryService.expireReservations();
+
+        const confirm = await fakeConfirm(order.payment.intent_ref, 'authorized');
+        expect(confirm.body.content.outcome).toBe('paid');
+        expect((await orderRow(order.ord_no)).status).toBe('paid');
+
+        // The freed stock was still on the shelf → re-allocated and issued.
+        const out = await db.query(
+            `SELECT COUNT(*)::int AS n FROM inventory_transactions
+             WHERE _lnk_table = 'orders' AND _lnk_id = $1 AND _trn_type = 'OUT'`, [order.ord_no]);
+        expect(out.rows[0].n).toBe(1);
+        const line = await db.query(
+            `SELECT fulfillment_status, _warehouse_no FROM order_lines WHERE _ord_no = $1`, [order.ord_no]);
+        expect(line.rows[0].fulfillment_status).toBe('reserved');
+        expect(line.rows[0]._warehouse_no).not.toBeNull();
+    });
+
+    test('given the freed stock was resold before payment confirmed then the line becomes a backorder, never a phantom', async () => {
+        const v = await makeVariant('TTLGONE', { price: 10 });
+        await receive(v, 2);   // exactly enough for one order
+
+        const first = await makeShopper('ttlgone1', [{ variantNo: v, qty: 2 }]);
+        const res1  = await placeOrder(first);
+        const order1 = res1.body.content.order;
+
+        // First order's hold expires…
+        await db.query(
+            `UPDATE inventory_reservations SET expires_at = NOW() - INTERVAL '1 second'
+             WHERE _ord_no = $1`, [order1.ord_no]);
+        const InventoryService = require('../services/inventoryService');
+        await InventoryService.expireReservations();
+
+        // …and a second shopper buys the freed stock outright.
+        const second = await makeShopper('ttlgone2', [{ variantNo: v, qty: 2 }]);
+        const res2   = await placeOrder(second);
+        await fakeConfirm(res2.body.content.order.payment.intent_ref, 'authorized');
+
+        // First order's payment then confirms: paid, but the line is an
+        // honest backorder (restock job fills it on the next arrival).
+        await fakeConfirm(order1.payment.intent_ref, 'authorized');
+        expect((await orderRow(order1.ord_no)).status).toBe('paid');
+        const line = await db.query(
+            `SELECT fulfillment_status FROM order_lines WHERE _ord_no = $1`, [order1.ord_no]);
+        expect(line.rows[0].fulfillment_status).toBe('backordered');
+        const out = await db.query(
+            `SELECT COUNT(*)::int AS n FROM inventory_transactions
+             WHERE _lnk_table = 'orders' AND _lnk_id = $1 AND _trn_type = 'OUT'`, [order1.ord_no]);
+        expect(out.rows[0].n).toBe(0);   // nothing issued — no oversell
+
+        const bal = await db.query(
+            `SELECT qty_on_hand, qty_reserved FROM inventory_balances WHERE _variant_no = $1`, [v]);
+        expect(Number(bal.rows[0].qty_on_hand)).toBe(0);
+        expect(Number(bal.rows[0].qty_reserved)).toBe(0);
+    });
+
     test('given webhook "failed" then reservations release and the order is payment_failed', async () => {
         const { order, variantNo } = await placedOrder('FAIL');
         await fakeConfirm(order.payment.intent_ref, 'failed');

@@ -4,6 +4,10 @@ const { DB: db, withTransaction } = require('../common/db');
 const Settings = require('../common/settings');
 const InventoryTransactions = require('../models/inventoryTransactions');
 
+function log(level, msg, extra = {}) {
+    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
+}
+
 // Fallback when app_settings 'reservations.ttl_minutes' is absent/invalid.
 const DEFAULT_RESERVATION_TTL_MINUTES = 15;
 
@@ -255,6 +259,69 @@ const InventoryService = (function () {
                     _ln_no: row.ln_no,
                 }, userId, client);
                 issued.push(trn);
+            }
+
+            // Recovery: the sweeper can expire a reservation in the instant
+            // between the TTL and this webhook. A paid order must never carry
+            // a phantom 'reserved' line with no stock issued — re-allocate on
+            // the spot (the freed stock is usually still there), or demote
+            // the line to a formal backorder for the restock job to fill.
+            const orphaned = await client.query(
+                `SELECT id, ln_no, _variant_no, qty, unit_price, entered_qty, entered_uom
+                 FROM order_lines ol
+                 WHERE ol._ord_no = $1 AND ol.fulfillment_status = 'reserved'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM inventory_transactions t
+                       WHERE t._lnk_table = 'orders' AND t._lnk_id = ol._ord_no
+                         AND t._ln_no = ol.ln_no AND t._trn_type = 'OUT')
+                 FOR UPDATE`,
+                [ordNo]);
+
+            for (const line of orphaned.rows) {
+                const alloc = await client.query(
+                    `SELECT fn_allocate_and_reserve($1, $2) AS warehouse_no`,
+                    [line._variant_no, line.qty]);
+                const warehouseNo = alloc.rows[0].warehouse_no;
+
+                if (warehouseNo == null) {
+                    // Freed stock was resold before payment confirmed — the
+                    // honest state is a backorder, never an unissued 'reserved'.
+                    await client.query(
+                        `UPDATE order_lines
+                         SET fulfillment_status = 'backordered', _warehouse_no = NULL
+                         WHERE id = $1`, [line.id]);
+                    log('warn', 'expired reservation could not be recovered at payment — line backordered',
+                        { ord_no: Number(ordNo), ln_no: line.ln_no, variant_no: Number(line._variant_no) });
+                    continue;
+                }
+
+                const resIns = await client.query(
+                    `INSERT INTO inventory_reservations
+                        (_ord_no, _variant_no, _warehouse_no, qty, expires_at, _create_user_id)
+                     VALUES ($1, $2, $3, $4, NOW(), $5)
+                     RETURNING reservation_no`,
+                    [ordNo, line._variant_no, warehouseNo, line.qty, userId]);
+                await client.query(
+                    `SELECT fn_consume_reservation($1)`, [resIns.rows[0].reservation_no]);
+
+                const trn = await InventoryTransactions.create({
+                    _trn_type: 'OUT',
+                    _variant_no: line._variant_no,
+                    _warehouse_no: warehouseNo,
+                    qty: -line.qty,
+                    unit_price: line.unit_price,
+                    entered_qty: line.entered_qty,
+                    entered_uom: line.entered_uom,
+                    _lnk_table: 'orders',
+                    _lnk_id: ordNo,
+                    _ln_no: line.ln_no,
+                }, userId, client);
+                await client.query(
+                    `UPDATE order_lines SET _warehouse_no = $2 WHERE id = $1`,
+                    [line.id, warehouseNo]);
+                issued.push(trn);
+                log('info', 'expired reservation recovered at payment', {
+                    ord_no: Number(ordNo), ln_no: line.ln_no, warehouse_no: Number(warehouseNo) });
             }
             return issued;
         };
