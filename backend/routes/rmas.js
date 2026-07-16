@@ -2,7 +2,7 @@
 
 const express           = require('express');
 const router            = express.Router();
-const requirePermission = require('../middleware/requirePermission');
+const { guard }         = require('../config/routePermissions');
 const RmasCntlr         = require('../controllers/RmasCntlr')();
 
 // Customers open returns on their own orders and see their own RMAs;
@@ -12,10 +12,10 @@ router.get('/',                  RmasCntlr.list);
 router.get('/:rma_no',           RmasCntlr.findOne);
 
 // Staff lifecycle
-router.put('/:rma_no/status',    requirePermission('rma:manage'),     RmasCntlr.updateStatus);
-router.post('/:rma_no/receive',  requirePermission('rma:manage'),     RmasCntlr.receive);
+router.put('/:rma_no/status',    guard('PUT /api/v1/rmas/:rma_no/status'),    RmasCntlr.updateStatus);
+router.post('/:rma_no/receive',  guard('POST /api/v1/rmas/:rma_no/receive'),  RmasCntlr.receive);
 
 // Finance credits the sale
-router.post('/:rma_no/refund',   requirePermission('refunds:create'), RmasCntlr.refund);
+router.post('/:rma_no/refund',   guard('POST /api/v1/rmas/:rma_no/refund'),   RmasCntlr.refund);
 
 module.exports = router;

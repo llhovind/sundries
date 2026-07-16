@@ -40,6 +40,7 @@ async function logout() {
       <router-link v-if="auth.hasPerm('catalog:write')" to="/categories">Categories</router-link>
       <router-link v-if="auth.hasPerm('customers:read')" to="/customers">Customers</router-link>
       <router-link v-if="auth.hasPerm('users:manage')" to="/users">Users</router-link>
+      <router-link v-if="auth.hasPerm('roles:manage')" to="/admin/roles">Roles</router-link>
     </nav>
     <span v-if="auth.user" class="user-info">
       <button v-if="isShopper" class="username-btn" @click="showProfile = true">{{ displayName }}</button>

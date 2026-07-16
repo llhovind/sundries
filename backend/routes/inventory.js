@@ -2,7 +2,7 @@
 
 const express           = require('express');
 const router            = express.Router();
-const requirePermission = require('../middleware/requirePermission');
+const { guard }         = require('../config/routePermissions');
 const { DB: db }        = require('../common/db');
 const InventoryBalances     = require('../models/inventoryBalances');
 const InventoryTransactions = require('../models/inventoryTransactions');
@@ -16,7 +16,7 @@ router.use('/transfers', require('./stockTransfers'));
 
 // GET /api/v1/inventory/balances?q=&page=&pageSize= — per-variant totals with
 // per-warehouse breakdown (inventory:read)
-router.get('/balances', requirePermission('inventory:read'), async (req, res, next) => {
+router.get('/balances', guard('GET /api/v1/inventory/balances'), async (req, res, next) => {
     try {
         const { page, pageSize, offset } = Pagination.parsePageQuery(req.query);
         const params = [];
@@ -59,7 +59,7 @@ router.get('/balances', requirePermission('inventory:read'), async (req, res, ne
 });
 
 // GET /api/v1/inventory/ledger/:variant_no — transaction history (inventory:read)
-router.get('/ledger/:variant_no', requirePermission('inventory:read'), (req, res, next) => {
+router.get('/ledger/:variant_no', guard('GET /api/v1/inventory/ledger/:variant_no'), (req, res, next) => {
     const variantNo = parseInt(req.params.variant_no, 10);
     if (isNaN(variantNo)) return next({ status: 400, message: 'Invalid variant_no' });
     InventoryTransactions.findForVariant(variantNo, {
@@ -76,7 +76,7 @@ router.get('/ledger/:variant_no', requirePermission('inventory:read'), (req, res
 });
 
 // GET /api/v1/inventory/warehouses — pick-list for receive/adjust forms
-router.get('/warehouses', requirePermission('inventory:read'), (req, res, next) => {
+router.get('/warehouses', guard('GET /api/v1/inventory/warehouses'), (req, res, next) => {
     db.query(`SELECT warehouse_no, code, name, wh_type, priority FROM warehouses
               WHERE status = 'active' ORDER BY priority, warehouse_no`)
         .then(r => {
@@ -89,7 +89,7 @@ router.get('/warehouses', requirePermission('inventory:read'), (req, res, next) 
 });
 
 // POST /api/v1/inventory/receive — stock in with cost (inventory:receive)
-router.post('/receive', requirePermission('inventory:receive'), (req, res, next) => {
+router.post('/receive', guard('POST /api/v1/inventory/receive'), (req, res, next) => {
     const { variant_no, warehouse_no, qty, unit_cost, notes } = req.body || {};
     InventoryService.receiveStock({
         variantNo: variant_no, warehouseNo: warehouse_no,
@@ -105,7 +105,7 @@ router.post('/receive', requirePermission('inventory:receive'), (req, res, next)
 });
 
 // POST /api/v1/inventory/adjust — signed correction / write-off (inventory:adjust)
-router.post('/adjust', requirePermission('inventory:adjust'), (req, res, next) => {
+router.post('/adjust', guard('POST /api/v1/inventory/adjust'), (req, res, next) => {
     const { variant_no, warehouse_no, qty, unit_cost, reason_code, notes } = req.body || {};
     InventoryService.adjust({
         variantNo: variant_no, warehouseNo: warehouse_no,

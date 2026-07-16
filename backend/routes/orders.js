@@ -2,7 +2,7 @@
 
 const express           = require('express');
 const router            = express.Router();
-const requirePermission = require('../middleware/requirePermission');
+const { guard }         = require('../config/routePermissions');
 const OrdersCntlr       = require('../controllers/OrdersCntlr')();
 
 // Reads: customers see their own orders, staff (orders:read) see all —
@@ -11,6 +11,6 @@ router.get('/',              OrdersCntlr.list);
 router.get('/:ord_no',       OrdersCntlr.findOne);
 
 // Fulfillment: captures the authorized payment (capture-on-fulfillment)
-router.post('/:ord_no/ship', requirePermission('orders:fulfill'), OrdersCntlr.ship);
+router.post('/:ord_no/ship', guard('POST /api/v1/orders/:ord_no/ship'), OrdersCntlr.ship);
 
 module.exports = router;

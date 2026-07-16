@@ -16,7 +16,10 @@ const Rbac = require('../models/rbac');
 function requirePermission(...codes) {
     if (codes.length === 0) throw new Error('requirePermission needs at least one permission code');
 
-    return async function (req, res, next) {
+    guard.permissionCodes = codes;   // introspection for startup route-guard validation
+    return guard;
+
+    async function guard(req, res, next) {
         if (!req.user) {
             return res.status(401).json({ message: 'Not authenticated' });
         }
@@ -31,7 +34,7 @@ function requirePermission(...codes) {
         } catch (err) {
             return next(err);
         }
-    };
+    }
 }
 
 module.exports = requirePermission;

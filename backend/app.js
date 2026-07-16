@@ -42,6 +42,7 @@ app.use('/api/v1/purchase-orders', auth, require('./routes/purchaseOrders'));
 app.use('/api/v1/vendors',        auth, require('./routes/vendors'));
 app.use('/api/v1/customers',      auth, require('./routes/customers'));
 app.use('/api/v1/users',          auth, require('./routes/users'));
+app.use('/api/v1/roles',          auth, require('./routes/roles'));
 app.use('/api/v1/cart',           auth, require('./routes/carts'));
 app.use('/api/v1/checkout',       auth, require('./routes/checkout'));
 app.use('/api/v1/reports',        auth, require('./routes/reports'));
@@ -49,6 +50,10 @@ app.use('/api/v1/rmas',           auth, require('./routes/rmas'));
 app.use('/api/v1/compliance',     auth, require('./routes/compliance'));
 app.use('/api/v1/orders',         auth, require('./routes/orders'));
 app.use('/api/v1/payments',       auth, require('./routes/payments'));
+
+// Fail fast: every /api/v1 route must match config/routePermissions.js
+// (guarded with exactly the configured codes, or explicitly allow-listed).
+require('./config/validateRouteGuards').validateRouteGuards(app);
 
 app.use(responseHandler.handleResponse);
 app.use(responseHandler.handleErrorResponse);

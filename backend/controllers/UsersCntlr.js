@@ -6,21 +6,25 @@ const Rbac       = require('../models/rbac');
 
 const UsersCntlr = function () {
 
-    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const EMAIL_REGEX      = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const ALLOWED_STATUSES = ['active', 'inactive'];
 
     return { find, findOne, createUser, update, deactivate, listRoles, grantRole, revokeRole };
 
-    // POST /api/v1/users
+    // POST /api/v1/users — body: { email, role, username? }
+    // role is deliberately required: an implicit default here once handed out
+    // admin, so privilege must always be an explicit choice by the caller.
     function createUser(req, res, next) {
-        const { email, role = 'admin' } = req.body;
+        const { email, role, username } = req.body;
 
         if (!email) return next({ status: 400, message: 'email is required' });
         if (!EMAIL_REGEX.test(email)) return next({ status: 400, message: 'Invalid email address' });
+        if (!role) return next({ status: 400, message: 'role is required' });
 
         Users.findByEmail(email)
             .then(existing => {
                 if (existing) return next({ status: 409, message: 'Email already registered' });
-                return Users.create({ email, role }, req.user.id);
+                return Users.create({ email, role, username: username || null }, req.user.id);
             })
             .then(user => {
                 if (!user) return; // short-circuit already handled by next()
@@ -35,11 +39,17 @@ const UsersCntlr = function () {
             });
     }
 
-    // GET /api/v1/users
+    // GET /api/v1/users?q=&role=&status=&staff=true
     function find(req, res, next) {
         const { page, pageSize, offset } = Pagination.parsePageQuery(req.query);
+        const { role, status } = req.query;
+        const staffOnly = req.query.staff === 'true' || req.query.staff === '1';
 
-        Users.findAll({ search: req.query.q, limit: pageSize, offset })
+        if (status !== undefined && !ALLOWED_STATUSES.includes(status)) {
+            return next({ status: 400, message: 'Invalid status filter' });
+        }
+
+        Users.findAll({ search: req.query.q, role, status, staffOnly, limit: pageSize, offset })
             .then(({ total, users }) => {
                 res.locals.results = Pagination.pageResult('users', users, total, page, pageSize);
                 res.locals.status  = 200;

@@ -2,7 +2,7 @@
 
 const express           = require('express');
 const router            = express.Router();
-const requirePermission = require('../middleware/requirePermission');
+const { guard }         = require('../config/routePermissions');
 const CustomersCntlr    = require('../controllers/CustomersCntlr')();
 
 // Self-service: any authenticated user manages their own profile
@@ -12,9 +12,9 @@ router.put('/me',  CustomersCntlr.upsertMe);
 router.all('/me',  (_req, _res, next) => next('router'));
 
 // Staff access to customer accounts
-router.get('/',    requirePermission('customers:read'),  CustomersCntlr.find);
-router.get('/:id', requirePermission('customers:read'),  CustomersCntlr.findOne);
-router.post('/',   requirePermission('customers:write'), CustomersCntlr.create);
-router.put('/:id', requirePermission('customers:write'), CustomersCntlr.update);
+router.get('/',    guard('GET /api/v1/customers'),     CustomersCntlr.find);
+router.get('/:id', guard('GET /api/v1/customers/:id'), CustomersCntlr.findOne);
+router.post('/',   guard('POST /api/v1/customers'),     CustomersCntlr.create);
+router.put('/:id', guard('PUT /api/v1/customers/:id'),  CustomersCntlr.update);
 
 module.exports = router;

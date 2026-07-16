@@ -25,6 +25,16 @@ var server = http.createServer(app);
  * Listen on provided port, on all network interfaces.
  */
 
+/**
+ * Every permission code referenced by config/routePermissions.js must exist
+ * in the permissions table — a typo'd code would deny everyone forever.
+ * Async (needs the DB), so it races the listen; failure kills the process.
+ */
+require('../config/validateRouteGuards').validatePermissionCodes().catch(function (err) {
+  console.error('Route permission validation failed:', err.message);
+  process.exit(1);
+});
+
 server.listen(port);
 server.on('error', onError);
 server.on('listening', onListening);

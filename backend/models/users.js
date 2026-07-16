@@ -16,22 +16,54 @@ const Users = (function () {
         deactivate,
     };
 
-    function findAll({ search, limit = 25, offset = 0 } = {}) {
+    /**
+     * Paged user listing with optional filters. Each row carries a `roles`
+     * array (all granted roles, not just the primary) for the admin UI.
+     *
+     * @param {object} [opts]
+     * @param {string}  [opts.search]    - matches username or email (ILIKE)
+     * @param {string}  [opts.role]      - exact primary-role match
+     * @param {string}  [opts.status]    - 'active' | 'inactive'
+     * @param {boolean} [opts.staffOnly] - exclude pure customers; a user whose
+     *        primary role is 'customer' but who holds a staff grant still counts
+     *        as staff, so grants can never hide a privileged account
+     */
+    function findAll({ search, role, status, staffOnly, limit = 25, offset = 0 } = {}) {
         const params = [];
-        let where = '';
+        const where  = [];
         if (search) {
             params.push(`%${search}%`);
-            where = `WHERE username ILIKE $1 OR email ILIKE $1`;
+            where.push(`(u.username ILIKE $${params.length} OR u.email ILIKE $${params.length})`);
+        }
+        if (role) {
+            params.push(role);
+            where.push(`u.role = $${params.length}`);
+        }
+        if (status) {
+            params.push(status);
+            where.push(`u.status = $${params.length}`);
+        }
+        if (staffOnly) {
+            where.push(`(u.role <> 'customer' OR EXISTS (
+                SELECT 1 FROM user_roles sur
+                JOIN roles sr ON sr.role_no = sur.role_no
+                WHERE sur.user_id = u.id AND sr.code <> 'customer'))`);
         }
         const pOffset = params.length + 1;
         const pLimit  = params.length + 2;
         params.push(offset, limit);
 
         return db.query(
-            `SELECT id, username, email, role, status, _create_ts,
+            `SELECT u.id, u.username, u.email, u.role, u.status, u._create_ts,
+                    COALESCE(ARRAY_AGG(r.code ORDER BY r.code)
+                             FILTER (WHERE r.code IS NOT NULL), '{}') AS roles,
                     COUNT(*) OVER() AS _total
-             FROM users ${where}
-             ORDER BY lower(email) OFFSET $${pOffset} LIMIT $${pLimit}`,
+             FROM users u
+             LEFT JOIN user_roles ur ON ur.user_id = u.id
+             LEFT JOIN roles r       ON r.role_no = ur.role_no
+             ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+             GROUP BY u.id
+             ORDER BY lower(u.email) OFFSET $${pOffset} LIMIT $${pLimit}`,
             params
         ).then(res => ({
             total: res.rows.length > 0 ? +res.rows[0]._total : 0,

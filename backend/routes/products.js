@@ -2,7 +2,7 @@
 
 const express           = require('express');
 const router            = express.Router();
-const requirePermission = require('../middleware/requirePermission');
+const { guard }         = require('../config/routePermissions');
 const ProductsCntlr     = require('../controllers/ProductsCntlr')();
 
 // Reads: public — anonymous guests browse the storefront; staff additionally
@@ -11,9 +11,9 @@ router.get('/',                        ProductsCntlr.list);
 router.get('/:product_no',             ProductsCntlr.findOne);
 
 // Catalog management
-router.post('/',                       requirePermission('catalog:write'), ProductsCntlr.create);
-router.put('/:product_no',             requirePermission('catalog:write'), ProductsCntlr.update);
-router.post('/:product_no/variants',   requirePermission('catalog:write'), ProductsCntlr.upsertVariant);
-router.put('/:product_no/options',     requirePermission('catalog:write'), ProductsCntlr.setOptions);
+router.post('/',                       guard('POST /api/v1/products'),                      ProductsCntlr.create);
+router.put('/:product_no',             guard('PUT /api/v1/products/:product_no'),           ProductsCntlr.update);
+router.post('/:product_no/variants',   guard('POST /api/v1/products/:product_no/variants'), ProductsCntlr.upsertVariant);
+router.put('/:product_no/options',     guard('PUT /api/v1/products/:product_no/options'),   ProductsCntlr.setOptions);
 
 module.exports = router;
