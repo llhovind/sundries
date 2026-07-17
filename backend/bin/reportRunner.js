@@ -14,10 +14,7 @@ require('../common/config');   // validates env, throws early if incomplete
 
 const { pool } = require('../common/db');
 const RunService = require('../services/reporting/runService');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
+const { log } = require('../common/logger');
 
 const runNo = parseInt(process.argv[2], 10);
 if (isNaN(runNo)) {

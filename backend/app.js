@@ -2,15 +2,24 @@ require('./common/config');   // validates required env vars — throws at start
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
-var logger = require('morgan');
+var morgan = require('morgan');
 const multer = require('multer');
+const Logger = require('./common/logger');
 const responseHandler = require('./common/responseHandlers');
 const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
 
 var app = express();
 
-app.use(logger('combined'));
+// HTTP access log — same structured JSON envelope as every other log line
+// (common/logger renders it; morgan owns the response-finished hook).
+app.use(morgan((tokens, req, res) => Logger.format('info', 'http access', {
+    method:         tokens.method(req, res),
+    path:           tokens.url(req, res),
+    status:         Number(tokens.status(req, res)) || null,
+    contentLength:  Number(tokens.res(req, res, 'content-length')) || 0,
+    responseTimeMs: Number(tokens['response-time'](req, res)) || null,
+})));
 
 // Payment webhooks need the RAW request body for signature verification, so
 // this router mounts BEFORE the JSON body parser.

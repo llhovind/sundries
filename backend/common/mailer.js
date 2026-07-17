@@ -17,19 +17,7 @@
  */
 
 const { getMailProvider } = require('../services/mail');
-
-// ---------------------------------------------------------------------------
-// Structured logger — all mail interactions use this, never console.log raw
-// ---------------------------------------------------------------------------
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({
-        level,
-        msg,
-        ts: new Date().toISOString(),
-        ...extra,
-    }) + '\n');
-}
+const { log } = require('./logger');
 
 // ---------------------------------------------------------------------------
 // Internal send helper — all outgoing mail goes through the MailProvider

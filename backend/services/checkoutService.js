@@ -9,10 +9,7 @@ const PaymentsService  = require('./paymentsService');
 const PromotionService = require('./promotionService');
 const ShippingService  = require('./shippingService');
 const TaxService       = require('./taxService');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
+const { log } = require('../common/logger');
 
 /**
  * CheckoutService — "Place Order" orchestration.

@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { log } = require('./logger');
 var pg = require('pg');
 var types = pg.types;
 var pgPool = pg.Pool;
@@ -53,7 +54,7 @@ var DB = (function () {
 
             pool.query(qry, data, (err, res) => {
                 if (err) {
-                    console.log(err);
+                    log('error', 'database query failed', { error: err });
                     reject(err);
                 } else {
                     resolve(res);

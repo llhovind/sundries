@@ -5,10 +5,7 @@ const { getProvider }  = require('./payments');
 const InventoryService = require('./inventoryService');
 const Orders           = require('../models/orders');
 const Rbac             = require('../models/rbac');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
+const { log } = require('../common/logger');
 
 /**
  * PaymentsService

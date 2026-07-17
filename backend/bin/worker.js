@@ -11,20 +11,17 @@
 
 require('../common/config');   // validates env, throws early if incomplete
 const Jobs = require('../services/jobs');
+const { log } = require('../common/logger');
 
 Jobs.start()
-    .then(() => process.stdout.write(JSON.stringify({
-        level: 'info', msg: 'worker up', pid: process.pid, ts: new Date().toISOString(),
-    }) + '\n'))
+    .then(() => log('info', 'worker up', { pid: process.pid }))
     .catch(err => {
-        console.error('Worker failed to start:', err.message);
+        log('error', 'worker failed to start', { error: err });
         process.exit(1);
     });
 
 async function shutdown(signal) {
-    process.stdout.write(JSON.stringify({
-        level: 'info', msg: `worker shutting down (${signal})`, ts: new Date().toISOString(),
-    }) + '\n');
+    log('info', 'worker shutting down', { signal });
     await Jobs.stop();
     process.exit(0);
 }

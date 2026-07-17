@@ -4,6 +4,7 @@ const fs   = require('fs');
 const path = require('path');
 const { CATEGORIES } = require('./categories');
 const { PARAM_TYPES } = require('./reportParams');
+const { log } = require('../../common/logger');
 
 /**
  * Report registry — discovers report controllers at startup.
@@ -41,10 +42,6 @@ const REPORTS_DIR = path.join(__dirname, '../../controllers/reports');
 const SLUG_REGEX     = /^[a-z][a-z0-9-]{1,49}$/;
 const MODES          = ['immediate', 'stored'];
 const COLUMN_FORMATS = ['text', 'int', 'qty', 'money', 'date', 'datetime', 'bool'];
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
 
 function invalid(slugOrFile, problem) {
     throw new Error(`Invalid report definition "${slugOrFile}": ${problem}`);

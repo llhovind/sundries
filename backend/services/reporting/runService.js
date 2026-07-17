@@ -6,12 +6,9 @@ const { fork } = require('child_process');
 const registry        = require('./registry');
 const { validateParams } = require('./reportParams');
 const ReportRuns      = require('../../models/reportRuns');
+const { log } = require('../../common/logger');
 
 const RUNNER_PATH = path.join(__dirname, '../../bin/reportRunner.js');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
 
 function reject(status, message) {
     throw Object.assign(new Error(message), { status });

@@ -15,6 +15,7 @@ const RefreshTokens   = require('../models/refreshTokens');
 const OtpCodes        = require('../models/otpCodes');
 const InvitationCodes = require('../models/invitationCodes');
 const mailer          = require('../common/mailer');
+const { log }         = require('../common/logger');
 
 // ---------------------------------------------------------------------------
 // Sentinel error — thrown inside a transaction to trigger rollback when an
@@ -171,22 +172,18 @@ router.post('/register', async (req, res) => {
 
         // Log IDs only: the raw invitation code is a live credential and the
         // email is PII — neither belongs in logs.
-        process.stdout.write(JSON.stringify({
-            level: 'info',
-            msg: 'Customer account created',
+        log('info', 'Customer account created', {
             invitationCodeId: code.id,
             userId: user.id,
-            ts: new Date().toISOString(),
-        }) + '\n');
+        });
 
         const { otp, otpHash } = generateOtp();
         await OtpCodes.create(user.id, otpHash);
 
         mailer.sendOTP(email, otp).catch(err =>
-            process.stdout.write(JSON.stringify({
-                level: 'error', msg: 'OTP email failed after registration',
-                to: email, error: err.message, ts: new Date().toISOString(),
-            }) + '\n')
+            log('error', 'OTP email failed after registration', {
+                userId: user.id, error: err.message,
+            })
         );
 
         return res.status(201).json({ message: 'Registration successful. Check your email for a login code.' });
@@ -194,7 +191,7 @@ router.post('/register', async (req, res) => {
         if (err instanceof InvitationExhaustedError) {
             return res.status(410).json({ message: 'Invitation code has reached its use limit' });
         }
-        console.error('Register error:', err);
+        log('error', 'registration failed', { error: err });
         return res.status(500).json({ message: 'Registration failed' });
     }
 });
@@ -231,15 +228,14 @@ router.post('/request-otp', async (req, res) => {
         await OtpCodes.create(user.id, otpHash);
 
         mailer.sendOTP(email, otp).catch(err =>
-            process.stdout.write(JSON.stringify({
-                level: 'error', msg: 'OTP email failed on request-otp',
-                to: email, error: err.message, ts: new Date().toISOString(),
-            }) + '\n')
+            log('error', 'OTP email failed on request-otp', {
+                userId: user.id, error: err.message,
+            })
         );
 
         return res.status(200).json({ message: 'If that email is registered, a login code has been sent.' });
     } catch (err) {
-        console.error('Request OTP error:', err);
+        log('error', 'request-otp failed', { error: err });
         return res.status(500).json({ message: 'Could not process request' });
     }
 });
@@ -298,7 +294,7 @@ router.post('/verify-otp', async (req, res) => {
             user: { id: user.id, email: user.email, role: user.role, username: user.username, customerName },
         });
     } catch (err) {
-        console.error('Verify OTP error:', err);
+        log('error', 'verify-otp failed', { error: err });
         return res.status(500).json({ message: 'Login failed' });
     }
 });
@@ -326,11 +322,9 @@ router.post('/refresh', async (req, res) => {
 
         if (result.outcome !== 'rotated') {
             if (result.outcome === 'reused') {
-                process.stdout.write(JSON.stringify({
-                    level: 'warn', msg: 'refresh token reuse detected — token family revoked',
+                log('warn', 'refresh token reuse detected — token family revoked', {
                     userId: result.userId, familyId: result.familyId,
-                    ts: new Date().toISOString(),
-                }) + '\n');
+                });
             }
             res.clearCookie(COOKIE_NAME, cookieOpts);
             return res.status(401).json({ message: 'Refresh token invalid or expired' });
@@ -357,7 +351,7 @@ router.post('/refresh', async (req, res) => {
             user: { id: user.id, email: user.email, role: user.role, username: user.username, customerName },
         });
     } catch (err) {
-        console.error('Refresh error:', err);
+        log('error', 'token refresh failed', { error: err });
         return res.status(500).json({ message: 'Token refresh failed' });
     }
 });
@@ -373,7 +367,7 @@ router.post('/logout', async (req, res) => {
         try {
             await RefreshTokens.revokeFamily(token);
         } catch (err) {
-            console.error('Logout revoke error:', err);
+            log('error', 'logout token-family revoke failed', { error: err });
         }
     }
     res.clearCookie(COOKIE_NAME, cookieOpts);

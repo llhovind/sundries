@@ -1,10 +1,7 @@
 'use strict';
 
 const { DB: db } = require('../common/db');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
+const { log } = require('../common/logger');
 
 /**
  * ComplianceService — GDPR/CCPA request intake + async processing.

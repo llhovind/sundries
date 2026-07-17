@@ -2,6 +2,7 @@
 
 const { DB: db } = require('../common/db');
 const Settings   = require('../common/settings');
+const { log }    = require('../common/logger');
 
 /**
  * TaxService — pluggable tax calculation port.
@@ -30,10 +31,7 @@ const TaxService = (function () {
         const provider = await Settings.getString('tax.provider', 'local');
 
         if (provider === 'stripe') {
-            process.stdout.write(JSON.stringify({
-                level: 'warn', msg: 'tax.provider=stripe not yet wired; using local tax_rates',
-                ts: new Date().toISOString(),
-            }) + '\n');
+            log('warn', 'tax.provider=stripe not yet wired; using local tax_rates');
         }
 
         const country = (address.country || 'US').toUpperCase();

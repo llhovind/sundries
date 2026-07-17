@@ -2,10 +2,7 @@
 
 const PgBoss = require('pg-boss');
 const { pgConfig, DB: db } = require('../common/db');
-
-function log(level, msg, extra = {}) {
-    process.stdout.write(JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n');
-}
+const { log } = require('../common/logger');
 
 /**
  * Jobs — pg-boss-backed background work. Postgres is the queue, so small

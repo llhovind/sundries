@@ -3,6 +3,7 @@
 const PaymentsService = require('../services/paymentsService');
 const fakeAdapter     = require('../services/payments/fakeStripeAdapter');
 const { getProvider } = require('../services/payments');
+const { log }         = require('../common/logger');
 
 const PaymentsCntlr = function () {
 
@@ -17,11 +18,9 @@ const PaymentsCntlr = function () {
         PaymentsService.handleWebhook(req.params.provider, req.headers, req.body)
             .then(result => res.status(200).json(result))
             .catch(err => {
-                process.stdout.write(JSON.stringify({
-                    level: 'error', msg: 'webhook processing failed',
+                log('error', 'webhook processing failed', {
                     provider: req.params.provider, error: err.message,
-                    ts: new Date().toISOString(),
-                }) + '\n');
+                });
                 res.status(err.status || 400).json({ message: 'Webhook rejected' });
             });
     }

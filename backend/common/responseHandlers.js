@@ -1,5 +1,7 @@
 'use strict';
 
+const { log } = require('./logger');
+
 var responseHandlers = (function () {
 
     return {
@@ -69,9 +71,14 @@ var responseHandlers = (function () {
     }
 
     function handleErrorResponse(err, req, res, next) {
-        console.log('ERROR - ', err);
-        console.log('  errors:', res.locals.errors);
-        console.log('  warnings:', res.locals.warnings);
+        log('error', 'request failed', {
+            method: req.method,
+            path: req.path,
+            status: res.locals.status || err.status || 500,
+            error: err,
+            errors: res.locals.errors,
+            warnings: res.locals.warnings,
+        });
 
         // set status
         res.locals.status = res.locals.status || err.status || 500;
