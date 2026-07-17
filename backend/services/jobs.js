@@ -22,6 +22,7 @@ function log(level, msg, extra = {}) {
  *   restock-arrivals     every minute — fill backorders, send back-in-stock mail
  *   search-outbox        every minute — drain catalog changes into the search index
  *   partition-maintenance daily 03:10 — pre-create ledger partitions when enabled
+ *   auth-token-purge     daily 03:40 — drop refresh tokens past forensic retention
  *
  * Queued work (enqueued by services via Jobs.send):
  *   email        {event, order, to}   — order lifecycle mail through the mail port
@@ -42,6 +43,7 @@ const Jobs = (function () {
         PARTITION:    'partition-maintenance',
         ROLLUP:       'daily-rollup',
         COMPLIANCE:   'compliance-request',
+        AUTH_PURGE:   'auth-token-purge',
     };
 
     // Handlers are lazy-required to avoid circular imports (paymentsService
@@ -91,6 +93,11 @@ const Jobs = (function () {
                 await Reports.rollupDay(day);
             }
             log('info', 'daily sales rollup complete', { days: 3 });
+        },
+        [QUEUES.AUTH_PURGE]: async () => {
+            const RefreshTokens = require('../models/refreshTokens');
+            const { purged } = await RefreshTokens.purgeExpired();
+            if (purged) log('info', 'expired refresh tokens purged', { purged });
         },
         [QUEUES.PARTITION]: async () => {
             const Settings = require('../common/settings');
@@ -142,6 +149,7 @@ const Jobs = (function () {
         await instance.schedule(QUEUES.OUTBOX,    '* * * * *');
         await instance.schedule(QUEUES.PARTITION, '10 3 * * *');
         await instance.schedule(QUEUES.ROLLUP,    '30 0 * * *');
+        await instance.schedule(QUEUES.AUTH_PURGE, '40 3 * * *');
 
         boss = instance;
         log('info', 'job runner started', { queues: Object.values(QUEUES) });

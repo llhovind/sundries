@@ -303,8 +303,14 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/v1/auth/refresh  — exchange a valid refresh cookie for a new
-//                              access token (unchanged from prior system)
+// POST /api/v1/auth/refresh  — rotate the refresh token and mint a new
+//                              access token
+//
+// The presented token is retired and a successor in the same family is set
+// as the new cookie, so each refresh extends the session by another
+// JWT_REFRESH_EXPIRES days (sliding window — a session lives as long as it
+// keeps being used). Reuse of a retired token outside the model's grace
+// window revokes the whole family; see models/refreshTokens.js.
 // ---------------------------------------------------------------------------
 router.post('/refresh', async (req, res) => {
     const token = req.cookies[COOKIE_NAME];
@@ -313,15 +319,30 @@ router.post('/refresh', async (req, res) => {
     }
 
     try {
-        const record = await RefreshTokens.findByToken(token);
-        if (!record) {
+        const newToken  = makeRefreshToken();
+        const expiresAt = refreshExpiresAt();
+        const result    = await RefreshTokens.rotate(token, newToken, expiresAt);
+
+        if (result.outcome !== 'rotated') {
+            if (result.outcome === 'reused') {
+                process.stdout.write(JSON.stringify({
+                    level: 'warn', msg: 'refresh token reuse detected — token family revoked',
+                    userId: result.userId, familyId: result.familyId,
+                    ts: new Date().toISOString(),
+                }) + '\n');
+            }
+            res.clearCookie(COOKIE_NAME, cookieOpts);
             return res.status(401).json({ message: 'Refresh token invalid or expired' });
         }
-        if (record.status !== 'active') {
+
+        const user = result.user;
+        if (user.status !== 'active') {
+            await RefreshTokens.revokeAllForUser(user.id);
+            res.clearCookie(COOKIE_NAME, cookieOpts);
             return res.status(403).json({ message: 'Account is inactive' });
         }
 
-        const user        = { id: record.user_id, email: record.email, role: record.role, username: record.username };
+        res.cookie(COOKIE_NAME, newToken, { ...cookieOpts, expires: expiresAt });
         const accessToken = await makeAccessToken(user);
 
         let customerName = null;
@@ -330,7 +351,10 @@ router.post('/refresh', async (req, res) => {
             customerName = customer?.name ?? null;
         }
 
-        return res.json({ accessToken, user: { ...user, customerName } });
+        return res.json({
+            accessToken,
+            user: { id: user.id, email: user.email, role: user.role, username: user.username, customerName },
+        });
     } catch (err) {
         console.error('Refresh error:', err);
         return res.status(500).json({ message: 'Token refresh failed' });
@@ -338,13 +362,15 @@ router.post('/refresh', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/v1/auth/logout  — revoke refresh token and clear cookie
+// POST /api/v1/auth/logout  — revoke the session's token family and clear
+//                             the cookie (rotated predecessors die too, so a
+//                             replayed pre-logout cookie cannot resurrect it)
 // ---------------------------------------------------------------------------
 router.post('/logout', async (req, res) => {
     const token = req.cookies[COOKIE_NAME];
     if (token) {
         try {
-            await RefreshTokens.revoke(token);
+            await RefreshTokens.revokeFamily(token);
         } catch (err) {
             console.error('Logout revoke error:', err);
         }
