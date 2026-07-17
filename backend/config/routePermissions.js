@@ -90,6 +90,22 @@ const ROUTE_PERMS = Object.freeze({
     'POST /api/v1/users/:id/roles':                ['users:manage'],
     'DELETE /api/v1/users/:id/roles/:role':        ['users:manage'],
 
+    // ── Store configuration (settings, shipping, tax, warehouses) ────────
+    'GET /api/v1/settings/values':                   ['settings:manage'],
+    'PUT /api/v1/settings/values/:key':              ['settings:manage'],
+    'GET /api/v1/settings/shipping-rules':           ['settings:manage'],
+    'POST /api/v1/settings/shipping-rules':          ['settings:manage'],
+    'PUT /api/v1/settings/shipping-rules/:rule_no':  ['settings:manage'],
+    'GET /api/v1/settings/weight-bands':             ['settings:manage'],
+    'POST /api/v1/settings/weight-bands':            ['settings:manage'],
+    'PUT /api/v1/settings/weight-bands/:band_no':    ['settings:manage'],
+    'GET /api/v1/settings/tax-rates':                ['settings:manage'],
+    'POST /api/v1/settings/tax-rates':               ['settings:manage'],
+    'PUT /api/v1/settings/tax-rates/:rate_no':       ['settings:manage'],
+    'GET /api/v1/settings/warehouses':               ['settings:manage'],
+    'POST /api/v1/settings/warehouses':              ['settings:manage'],
+    'PUT /api/v1/settings/warehouses/:warehouse_no': ['settings:manage'],
+
     // ── Role administration (escalation-sensitive — admin only) ──────────
     'GET /api/v1/roles':                           ['roles:manage'],
     'GET /api/v1/roles/permissions':               ['roles:manage'],

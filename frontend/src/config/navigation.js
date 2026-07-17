@@ -45,6 +45,7 @@ export const STAFF_NAV_GROUPS = [
         items: [
             { label: 'Users',      route: 'users' },
             { label: 'Roles',      route: 'admin-roles' },
+            { label: 'Settings',   route: 'admin-settings' },
         ],
     },
 ];

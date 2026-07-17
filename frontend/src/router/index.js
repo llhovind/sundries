@@ -16,6 +16,7 @@ import CategoriesView from '../views/CategoriesView.vue';
 import CustomersView from '../views/CustomersView.vue';
 import UsersView from '../views/UsersView.vue';
 import RolesView from '../views/admin/RolesView.vue';
+import SettingsView from '../views/admin/SettingsView.vue';
 import LoginView from '../views/LoginView.vue';
 import RegisterView from '../views/RegisterView.vue';
 import { useAuthStore } from '@/stores/auth';
@@ -61,6 +62,8 @@ const router = createRouter({
           meta: { requiresPerm: ['users:manage'] } },
         { path: 'admin/roles',      name: 'admin-roles',      component: RolesView,
           meta: { requiresPerm: ['roles:manage'] } },
+        { path: 'admin/settings',   name: 'admin-settings',   component: SettingsView,
+          meta: { requiresPerm: ['settings:manage'] } },
 
         { path: '', redirect: () => homeFor() },
         { path: ':pathMatch(.*)*', redirect: () => homeFor() },

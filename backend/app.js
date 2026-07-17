@@ -43,6 +43,7 @@ app.use('/api/v1/vendors',        auth, require('./routes/vendors'));
 app.use('/api/v1/customers',      auth, require('./routes/customers'));
 app.use('/api/v1/users',          auth, require('./routes/users'));
 app.use('/api/v1/roles',          auth, require('./routes/roles'));
+app.use('/api/v1/settings',       auth, require('./routes/settings'));
 app.use('/api/v1/cart',           auth, require('./routes/carts'));
 app.use('/api/v1/checkout',       auth, require('./routes/checkout'));
 app.use('/api/v1/reports',        auth, require('./routes/reports'));
