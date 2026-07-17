@@ -11,11 +11,11 @@ test.describe('session persistence on page refresh', () => {
         await page.click('button[type="submit"]');
         await expect(page).toHaveURL(/\/shop/);
 
-        // ── 2. Confirm the ff_refresh httpOnly cookie was set ────────────────
+        // ── 2. Confirm the refresh_token httpOnly cookie was set ─────────────
         const cookies = await page.context().cookies();
-        const refreshCookie = cookies.find(c => c.name === 'ff_refresh');
-        expect(refreshCookie, 'ff_refresh cookie must be set after login').toBeTruthy();
-        expect(refreshCookie.httpOnly, 'ff_refresh cookie must be httpOnly').toBe(true);
+        const refreshCookie = cookies.find(c => c.name === 'refresh_token');
+        expect(refreshCookie, 'refresh_token cookie must be set after login').toBeTruthy();
+        expect(refreshCookie.httpOnly, 'refresh_token cookie must be httpOnly').toBe(true);
 
         // ── 3. Hard reload — wipes in-memory JS state; the session must be
         //       restored from the refresh cookie alone ────────────────────────

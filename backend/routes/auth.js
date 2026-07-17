@@ -28,7 +28,9 @@ class InvitationExhaustedError extends Error {
 // Constants
 // ---------------------------------------------------------------------------
 
-const COOKIE_NAME = 'ff_refresh';
+// Renaming this logs out every existing session (the old cookie is no longer
+// read); users just re-authenticate via OTP.
+const COOKIE_NAME = 'refresh_token';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const cookieOpts = {

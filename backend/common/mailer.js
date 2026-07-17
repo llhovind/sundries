@@ -3,15 +3,16 @@
 /**
  * Email service module.
  *
- * Wraps Nodemailer with structured JSON logging for every SMTP interaction.
+ * Wraps the MailProvider port with structured JSON logging for every send.
  * All transport events (connection errors, send results) are logged to stdout
  * so that operators have a complete audit trail without inspecting the mail
  * server directly.
  *
  * Exports:
- *   sendOTP(email, otp)                         - deliver a one-time passcode
- *   notify(event, cart, recipient)               - workflow notification emails
- *   NOTIFICATION_EVENTS                          - event name constants
+ *   sendOTP(email, otp)                  - deliver a one-time passcode
+ *   sendOrderEvent(event, order, to)     - order lifecycle notifications
+ *   sendRmaEvent(event, rma, to)         - returns (RMA) lifecycle notifications
+ *   sendBackInStock(to, product)         - back-in-stock notification
  */
 
 const { getMailProvider } = require('../services/mail');
@@ -63,13 +64,6 @@ async function send({ to, subject, text, html }) {
 // Public API
 // ---------------------------------------------------------------------------
 
-const NOTIFICATION_EVENTS = {
-    QUOTE_SUBMITTED:  'quote_submitted',   // admin notified: customer submitted a quote
-    QUOTE_RECONCILED: 'quote_reconciled',  // customer notified: prices updated, approval needed
-    QUOTE_APPROVED:   'quote_approved',    // admin notified: customer approved the quote
-    ORDER_SHIPPED:    'order_shipped',     // customer notified: order has shipped
-};
-
 /**
  * Send a one-time passcode to the given address.
  *
@@ -85,29 +79,6 @@ function sendOTP(email, otp) {
         html:    `<p>Your one-time login code is: <strong>${otp}</strong></p>
                   <p>This code expires in 10 minutes. Do not share it with anyone.</p>`,
     });
-}
-
-/**
- * Send a workflow notification email.
- * Fire-and-forget at call sites — callers should .catch() but not await.
- *
- * @param {string} event      - one of NOTIFICATION_EVENTS
- * @param {object} cart       - { cart_no, status, ... }
- * @param {object} recipient  - { id, email }
- * @returns {Promise<void>}
- */
-function notify(event, cart, recipient) {
-    const subjects = {
-        [NOTIFICATION_EVENTS.QUOTE_SUBMITTED]:  `Quote #${cart.cart_no} submitted for review`,
-        [NOTIFICATION_EVENTS.QUOTE_RECONCILED]: `Quote #${cart.cart_no} is ready for your approval`,
-        [NOTIFICATION_EVENTS.QUOTE_APPROVED]:   `Quote #${cart.cart_no} has been approved`,
-        [NOTIFICATION_EVENTS.ORDER_SHIPPED]:    `Your order #${cart.cart_no} has shipped`,
-    };
-
-    const subject = subjects[event] || `Store notification: ${event}`;
-    const text = `${subject}\n\nCart: ${cart.cart_no}\nStatus: ${cart.status}`;
-
-    return send({ to: recipient.email, subject, text });
 }
 
 /**
@@ -169,4 +140,4 @@ function sendBackInStock(recipient, product = {}) {
     return send({ to: recipient, subject, text });
 }
 
-module.exports = { sendOTP, notify, sendOrderEvent, sendRmaEvent, sendBackInStock, NOTIFICATION_EVENTS };
+module.exports = { sendOTP, sendOrderEvent, sendRmaEvent, sendBackInStock };
