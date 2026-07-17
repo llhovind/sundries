@@ -99,6 +99,20 @@ describe('common/config startup validation', () => {
         })).not.toThrow();
     });
 
+    test('given NODE_ENV=production without COOKIE_SECURE then startup fails', () => {
+        expect(() => loadConfig({ ...BASE_ENV, ...SMTP_ENV, NODE_ENV: 'production' }))
+            .toThrow(/COOKIE_SECURE must be 'true' when NODE_ENV is 'production'/);
+        expect(() => loadConfig({
+            ...BASE_ENV, ...SMTP_ENV, NODE_ENV: 'production', COOKIE_SECURE: 'false',
+        })).toThrow(/COOKIE_SECURE/);
+    });
+
+    test('given NODE_ENV=production with COOKIE_SECURE=true then config loads', () => {
+        expect(() => loadConfig({
+            ...BASE_ENV, ...SMTP_ENV, NODE_ENV: 'production', COOKIE_SECURE: 'true',
+        })).not.toThrow();
+    });
+
     test('given several problems at once then all are reported in one error', () => {
         expect(() => loadConfig({ ...BASE_ENV, MAIL_PROVIDER: 'bogus', PAYMENT_PROVIDER: 'bogus' }))
             .toThrow(/MAIL_PROVIDER.*PAYMENT_PROVIDER/s);

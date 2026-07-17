@@ -56,6 +56,13 @@ function validate(env) {
         problems.push(`PAYMENT_PROVIDER must be one of [${PAYMENT_PROVIDERS.join(', ')}], got '${env.PAYMENT_PROVIDER}'`);
     }
 
+    // The refresh-token cookie must never travel over plain HTTP in
+    // production — a deploy that forgets COOKIE_SECURE fails here, not in
+    // an incident report.
+    if (env.NODE_ENV === 'production' && env.COOKIE_SECURE !== 'true') {
+        problems.push("COOKIE_SECURE must be 'true' when NODE_ENV is 'production'");
+    }
+
     if (problems.length) {
         throw new Error(`Invalid configuration: ${problems.join('; ')}`);
     }

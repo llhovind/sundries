@@ -169,11 +169,12 @@ router.post('/register', async (req, res) => {
             );
         });
 
+        // Log IDs only: the raw invitation code is a live credential and the
+        // email is PII — neither belongs in logs.
         process.stdout.write(JSON.stringify({
             level: 'info',
             msg: 'Customer account created',
-            email,
-            invitationCode,
+            invitationCodeId: code.id,
             userId: user.id,
             ts: new Date().toISOString(),
         }) + '\n');

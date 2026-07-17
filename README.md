@@ -160,6 +160,13 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
 * `db1`: PostgreSQL 15; only reachable from `web1` (firewall / private VLAN)
 * Both in a DMZ; only nginx :443 is exposed
 
+> **Per-IP rate limiting is the deployment's job.** The API rate-limits OTP
+> requests per account and login attempts per code, but deliberately ships no
+> per-IP throttling — implement it at the reverse proxy or WAF in front of the
+> API (e.g. nginx `limit_req` on `/api/v1/auth/*`, or AWS WAF rate-based rules
+> on a cloud deployment) so one client cannot spray OTP email across many
+> addresses or hammer `/register`.
+
 **Install checklist**
 
 1. PostgreSQL on `db1`: create the database and an app user (see grants below).
