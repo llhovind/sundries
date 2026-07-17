@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 const { badRequest, oneOf, requireNumber, requireString } = require('../common/validation');
 
 /**
@@ -51,13 +51,13 @@ const AppSettings = (function () {
         }
         const normalized = KEY_RULES[key] ? KEY_RULES[key](value) : value;
 
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `UPDATE app_settings
              SET value = $2::jsonb, _modify_ts = NOW(), _modify_user_id = $3
              WHERE key = $1
              RETURNING key, value, descr, _modify_ts`,
             [key, JSON.stringify(normalized), userId]
-        ).then(res => res.rows[0]);
+        )).then(res => res.rows[0]);
     }
 
 }());

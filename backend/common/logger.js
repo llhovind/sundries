@@ -22,6 +22,8 @@
  * harnesses that swap the stream (see tests/reports.test.js) capture output.
  */
 
+const requestContext = require('./requestContext');
+
 const LEVELS = Object.freeze(['debug', 'info', 'warn', 'error']);
 
 function serializeValue(value) {
@@ -50,6 +52,8 @@ function serializeValue(value) {
  */
 function format(level, msg, extra = {}) {
     const entry = { level, msg, ts: new Date().toISOString() };
+    const ctx = requestContext.get();
+    if (ctx?.correlationId) entry.correlationId = ctx.correlationId;
     for (const [key, value] of Object.entries(extra)) {
         entry[key] = serializeValue(value);
     }

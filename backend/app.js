@@ -11,6 +11,10 @@ const optionalAuth = require('./middleware/optionalAuth');
 
 var app = express();
 
+// Per-request context (correlation id + client ip) — must be first so every
+// log line and DB audit row downstream can attribute itself to the request.
+app.use(require('./common/requestContext').middleware);
+
 // HTTP access log — same structured JSON envelope as every other log line
 // (common/logger renders it; morgan owns the response-finished hook).
 app.use(morgan((tokens, req, res) => Logger.format('info', 'http access', {
@@ -53,6 +57,7 @@ app.use('/api/v1/customers',      auth, require('./routes/customers'));
 app.use('/api/v1/users',          auth, require('./routes/users'));
 app.use('/api/v1/roles',          auth, require('./routes/roles'));
 app.use('/api/v1/settings',       auth, require('./routes/settings'));
+app.use('/api/v1/audit-log',      auth, require('./routes/auditLog'));
 app.use('/api/v1/cart',           auth, require('./routes/carts'));
 app.use('/api/v1/checkout',       auth, require('./routes/checkout'));
 app.use('/api/v1/reports',        auth, require('./routes/reports'));

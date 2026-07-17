@@ -81,4 +81,35 @@ async function withTransaction(fn) {
     }
 }
 
-module.exports = { DB, pool, withTransaction, pgConfig };
+/**
+ * withTransaction plus actor attribution for the DB audit triggers
+ * (fn_audit_row): sets the per-transaction app.user_id / app.ip /
+ * app.correlation_id settings before running fn, so every row the triggers
+ * write inside this transaction is attributed to the acting user and request.
+ *
+ * ALL writes to audited tables (product_variants, user_roles, refunds,
+ * shipping_rules, tax_rates, app_settings, warehouses, roles,
+ * role_permissions) must go through this — a plain query() or bare
+ * withTransaction() produces an anonymous audit row.
+ *
+ * @param {number|string|null} actorId - acting user id; null only for
+ *        system-initiated writes (jobs), which audit as anonymous by design
+ * @param {(client: import('pg').PoolClient) => Promise<T>} fn
+ * @returns {Promise<T>}
+ * @template T
+ */
+function withAudit(actorId, fn) {
+    const requestContext = require('./requestContext');
+    return withTransaction(async (client) => {
+        const ctx = requestContext.get();
+        await client.query(
+            `SELECT set_config('app.user_id', $1, true),
+                    set_config('app.ip', $2, true),
+                    set_config('app.correlation_id', $3, true)`,
+            [actorId == null ? '' : String(actorId), ctx?.ip ?? '', ctx?.correlationId ?? '']
+        );
+        return fn(client);
+    });
+}
+
+module.exports = { DB, pool, withTransaction, withAudit, pgConfig };

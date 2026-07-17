@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 const { badRequest, requireString, requireNumber, optionalNumber, oneOf } = require('../common/validation');
 
 /**
@@ -46,25 +46,25 @@ const ShippingRules = (function () {
 
     function createRule(data, userId) {
         const r = validateRule(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `INSERT INTO shipping_rules (name, min_subtotal, max_subtotal, base_amount, priority, status,
                                          _create_ts, _modify_ts, _modify_user_id)
              VALUES ($1,$2,$3,$4,$5,$6, NOW(), NOW(), $7)
              RETURNING rule_no, name, min_subtotal, max_subtotal, base_amount, priority, status, _modify_ts`,
             [r.name, r.min_subtotal, r.max_subtotal, r.base_amount, r.priority, r.status, userId]
-        ).then(res => res.rows[0]);
+        )).then(res => res.rows[0]);
     }
 
     function updateRule(ruleNo, data, userId) {
         const r = validateRule(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `UPDATE shipping_rules
              SET name=$2, min_subtotal=$3, max_subtotal=$4, base_amount=$5, priority=$6, status=$7,
                  _modify_ts=NOW(), _modify_user_id=$8
              WHERE rule_no=$1
              RETURNING rule_no, name, min_subtotal, max_subtotal, base_amount, priority, status, _modify_ts`,
             [ruleNo, r.name, r.min_subtotal, r.max_subtotal, r.base_amount, r.priority, r.status, userId]
-        ).then(res => res.rows[0] || null);
+        )).then(res => res.rows[0] || null);
     }
 
     // ── Weight bands ─────────────────────────────────────────────────────
@@ -91,25 +91,25 @@ const ShippingRules = (function () {
 
     function createBand(data, userId) {
         const b = validateBand(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `INSERT INTO shipping_weight_bands (min_weight_lbs, max_weight_lbs, surcharge, status,
                                                 _create_ts, _modify_ts, _modify_user_id)
              VALUES ($1,$2,$3,$4, NOW(), NOW(), $5)
              RETURNING band_no, min_weight_lbs, max_weight_lbs, surcharge, status, _modify_ts`,
             [b.min_weight_lbs, b.max_weight_lbs, b.surcharge, b.status, userId]
-        ).then(res => res.rows[0]);
+        )).then(res => res.rows[0]);
     }
 
     function updateBand(bandNo, data, userId) {
         const b = validateBand(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `UPDATE shipping_weight_bands
              SET min_weight_lbs=$2, max_weight_lbs=$3, surcharge=$4, status=$5,
                  _modify_ts=NOW(), _modify_user_id=$6
              WHERE band_no=$1
              RETURNING band_no, min_weight_lbs, max_weight_lbs, surcharge, status, _modify_ts`,
             [bandNo, b.min_weight_lbs, b.max_weight_lbs, b.surcharge, b.status, userId]
-        ).then(res => res.rows[0] || null);
+        )).then(res => res.rows[0] || null);
     }
 
 }());

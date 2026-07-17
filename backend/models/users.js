@@ -1,7 +1,7 @@
 'use strict';
 
 const db = require('../common/db').DB;
-const { withTransaction } = require('../common/db');
+const { withAudit } = require('../common/db');
 
 const Users = (function () {
 
@@ -147,10 +147,7 @@ const Users = (function () {
             if (known.rowCount === 0) throw new Error('Invalid role');
         }
 
-        return withTransaction(async (client) => {
-            if (actorId != null) {
-                await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
-            }
+        return withAudit(actorId, async (client) => {
             const sets = ['_modify_ts = NOW()'];
             const vals = [];
             if (role !== undefined)   { vals.push(role);   sets.push(`role = $${vals.length}`); }
@@ -198,10 +195,7 @@ const Users = (function () {
         const known = await db.query('SELECT 1 FROM roles WHERE code = $1', [role]);
         if (known.rowCount === 0) throw new Error('Invalid role');
 
-        return withTransaction(async (client) => {
-            if (actorId != null) {
-                await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
-            }
+        return withAudit(actorId, async (client) => {
             const res = await client.query(
                 `INSERT INTO users (username, email, role, status, _create_ts, _modify_ts)
                  VALUES ($1, $2, $3, 'active', NOW(), NOW())

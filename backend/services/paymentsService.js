@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db, withTransaction } = require('../common/db');
+const { DB: db, withTransaction, withAudit } = require('../common/db');
 const { getProvider }  = require('./payments');
 const InventoryService = require('./inventoryService');
 const Orders           = require('../models/orders');
@@ -273,7 +273,7 @@ const PaymentsService = (function () {
 
         const payment = await findPaymentForOrder(ordNo, ['captured', 'partially_refunded', 'refunded']);
 
-        const { refundNo, alreadyRefunded } = await withTransaction(async (client) => {
+        const { refundNo, alreadyRefunded } = await withAudit(actorUserId, async (client) => {
             await client.query(
                 `SELECT payment_no FROM payments WHERE payment_no = $1 FOR UPDATE`,
                 [payment.payment_no]);
@@ -305,8 +305,7 @@ const PaymentsService = (function () {
             const r = await getProvider(payment.provider).refund(payment.intent_ref, amount);
             const toCents = n => Math.round(Number(n) * 100);
             const fullyRefunded = toCents(alreadyRefunded) + toCents(amount) >= toCents(payment.amount);
-            await withTransaction(async (client) => {
-                await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorUserId)]);
+            await withAudit(actorUserId, async (client) => {
                 await client.query(
                     `UPDATE refunds SET status = 'completed', provider_ref = $2, _modify_ts = NOW()
                      WHERE refund_no = $1`,
@@ -319,8 +318,8 @@ const PaymentsService = (function () {
             });
             return { refund_no: refundNo, status: 'completed' };
         } catch (err) {
-            await db.query(
-                `UPDATE refunds SET status = 'failed', _modify_ts = NOW() WHERE refund_no = $1`, [refundNo]);
+            await withAudit(actorUserId, (client) => client.query(
+                `UPDATE refunds SET status = 'failed', _modify_ts = NOW() WHERE refund_no = $1`, [refundNo]));
             throw err;
         }
     }

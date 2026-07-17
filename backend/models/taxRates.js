@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 const { requireString, optionalString, requireNumber, oneOf } = require('../common/validation');
 
 /**
@@ -38,25 +38,25 @@ const TaxRates = (function () {
 
     function create(data, userId) {
         const t = validate(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `INSERT INTO tax_rates (country, state, postal_prefix, rate, name, status,
                                     _create_ts, _modify_ts, _modify_user_id)
              VALUES ($1,$2,$3,$4,$5,$6, NOW(), NOW(), $7)
              RETURNING rate_no, country, state, postal_prefix, rate, name, status, _modify_ts`,
             [t.country, t.state, t.postal_prefix, t.rate, t.name, t.status, userId]
-        ).then(res => res.rows[0]);
+        )).then(res => res.rows[0]);
     }
 
     function update(rateNo, data, userId) {
         const t = validate(data);
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `UPDATE tax_rates
              SET country=$2, state=$3, postal_prefix=$4, rate=$5, name=$6, status=$7,
                  _modify_ts=NOW(), _modify_user_id=$8
              WHERE rate_no=$1
              RETURNING rate_no, country, state, postal_prefix, rate, name, status, _modify_ts`,
             [rateNo, t.country, t.state, t.postal_prefix, t.rate, t.name, t.status, userId]
-        ).then(res => res.rows[0] || null);
+        )).then(res => res.rows[0] || null);
     }
 
 }());

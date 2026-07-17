@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 const { requireString, optionalString, requireNumber, oneOf } = require('../common/validation');
 
 /**
@@ -52,7 +52,7 @@ const Warehouses = (function () {
 
     function create(data, userId) {
         const w = validate(data, { withCode: true });
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `INSERT INTO warehouses (code, name, wh_type, address, city, state, country, zip,
                                      priority, default_carrier, status,
                                      _create_ts, _create_user_id, _modify_ts, _modify_user_id)
@@ -61,13 +61,13 @@ const Warehouses = (function () {
                        priority, default_carrier, status, _modify_ts`,
             [w.code, w.name, w.wh_type, w.address, w.city, w.state, w.country, w.zip,
              w.priority, w.default_carrier, w.status, userId]
-        ).then(res => res.rows[0]);
+        )).then(res => res.rows[0]);
     }
 
     /** `code` is immutable — it is not accepted here. */
     function update(warehouseNo, data, userId) {
         const w = validate(data, { withCode: false });
-        return db.query(
+        return withAudit(userId, (client) => client.query(
             `UPDATE warehouses
              SET name=$2, wh_type=$3, address=$4, city=$5, state=$6, country=$7, zip=$8,
                  priority=$9, default_carrier=$10, status=$11, _modify_ts=NOW(), _modify_user_id=$12
@@ -76,7 +76,7 @@ const Warehouses = (function () {
                        priority, default_carrier, status, _modify_ts`,
             [warehouseNo, w.name, w.wh_type, w.address, w.city, w.state, w.country, w.zip,
              w.priority, w.default_carrier, w.status, userId]
-        ).then(res => res.rows[0] || null);
+        )).then(res => res.rows[0] || null);
     }
 
 }());

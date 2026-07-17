@@ -46,6 +46,7 @@ export const STAFF_NAV_GROUPS = [
             { label: 'Users',      route: 'users' },
             { label: 'Roles',      route: 'admin-roles' },
             { label: 'Settings',   route: 'admin-settings' },
+            { label: 'Audit Log',  route: 'admin-audit-log' },
         ],
     },
 ];

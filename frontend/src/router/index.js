@@ -17,6 +17,7 @@ import CustomersView from '../views/CustomersView.vue';
 import UsersView from '../views/UsersView.vue';
 import RolesView from '../views/admin/RolesView.vue';
 import SettingsView from '../views/admin/SettingsView.vue';
+import AuditLogView from '../views/admin/AuditLogView.vue';
 import LoginView from '../views/LoginView.vue';
 import RegisterView from '../views/RegisterView.vue';
 import { useAuthStore } from '@/stores/auth';
@@ -67,6 +68,8 @@ const router = createRouter({
           meta: { requiresPerm: ['roles:manage'] } },
         { path: 'admin/settings',   name: 'admin-settings',   component: SettingsView,
           meta: { requiresPerm: ['settings:manage'] } },
+        { path: 'admin/audit-log',  name: 'admin-audit-log',  component: AuditLogView,
+          meta: { requiresPerm: ['audit:read'] } },
 
         { path: '', redirect: () => homeFor() },
         { path: ':pathMatch(.*)*', redirect: () => homeFor() },

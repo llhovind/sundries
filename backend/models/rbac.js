@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db, withTransaction } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 
 /**
  * Repository for role/permission resolution and role grants.
@@ -123,8 +123,7 @@ const Rbac = (function () {
         }
         if (!name) reject(400, 'Role name is required');
 
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
+        return withAudit(actorId, async (client) => {
             const res = await client.query(
                 `INSERT INTO roles (code, name, descr, is_system)
                  VALUES ($1, $2, $3, FALSE)
@@ -145,8 +144,7 @@ const Rbac = (function () {
         if (name !== undefined && !name) reject(400, 'Role name cannot be empty');
         if (name === undefined && descr === undefined) reject(400, 'Nothing to update');
 
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
+        return withAudit(actorId, async (client) => {
             const sets = [];
             const vals = [];
             if (name !== undefined)  { vals.push(name);  sets.push(`name = $${vals.length}`); }
@@ -177,8 +175,7 @@ const Rbac = (function () {
         if (!Array.isArray(permCodes)) reject(400, 'permissions must be an array of codes');
         if (LOCKED_ROLES.includes(code)) reject(403, `Role is locked: ${code}`);
 
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
+        return withAudit(actorId, async (client) => {
 
             const role = await client.query('SELECT role_no FROM roles WHERE code = $1', [code]);
             if (role.rowCount === 0) reject(404, `Unknown role: ${code}`);
@@ -213,8 +210,7 @@ const Rbac = (function () {
     function deleteRole(code, actorId) {
         if (LOCKED_ROLES.includes(code)) reject(403, `Role is locked: ${code}`);
 
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(actorId)]);
+        return withAudit(actorId, async (client) => {
 
             const role = await client.query(
                 'SELECT role_no, is_system FROM roles WHERE code = $1', [code]
@@ -243,8 +239,7 @@ const Rbac = (function () {
      * @returns {Promise<boolean>} true if newly granted, false if already held
      */
     function grantRole(userId, roleCode, grantedBy) {
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(grantedBy)]);
+        return withAudit(grantedBy, async (client) => {
             const res = await client.query(
                 `INSERT INTO user_roles (user_id, role_no, granted_by)
                  SELECT $1, role_no, $3 FROM roles WHERE code = $2
@@ -270,8 +265,7 @@ const Rbac = (function () {
      * @returns {Promise<boolean>} true if a grant was removed
      */
     function revokeRole(userId, roleCode, revokedBy) {
-        return withTransaction(async (client) => {
-            await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(revokedBy)]);
+        return withAudit(revokedBy, async (client) => {
             const res = await client.query(
                 `DELETE FROM user_roles ur
                  USING roles r

@@ -119,6 +119,10 @@ const ROUTE_PERMS = Object.freeze({
     'POST /api/v1/settings/warehouses':              ['settings:manage'],
     'PUT /api/v1/settings/warehouses/:warehouse_no': ['settings:manage'],
 
+    // ── Audit trail (read-only; snapshots expose PII — admin-seeded) ─────
+    'GET /api/v1/audit-log':                       ['audit:read'],
+    'GET /api/v1/audit-log/entities':              ['audit:read'],
+
     // ── Role administration (escalation-sensitive — admin only) ──────────
     'GET /api/v1/roles':                           ['roles:manage'],
     'GET /api/v1/roles/permissions':               ['roles:manage'],

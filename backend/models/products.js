@@ -1,6 +1,6 @@
 'use strict';
 
-const { DB: db, withTransaction } = require('../common/db');
+const { DB: db, withAudit } = require('../common/db');
 
 /**
  * Repository for the product catalog (products + options + variants).
@@ -150,7 +150,7 @@ const Products = (function () {
      */
     function upsertVariant(productNo, data, userId) {
         const { variant_no, sku, price, status, weight_lbs, position, valueNos } = data;
-        return withTransaction(async (client) => {
+        return withAudit(userId, async (client) => {
             let variantNo = variant_no;
             if (variantNo) {
                 const res = await client.query(
@@ -252,8 +252,8 @@ const Products = (function () {
      * to variants are rejected. Renames are treated as remove + add.
      * options: [{name, values: ['Red','Blue']}]
      */
-    function setOptions(productNo, options, _userId) {
-        return withTransaction(async (client) => {
+    function setOptions(productNo, options, userId) {
+        return withAudit(userId, async (client) => {
             const current = await loadCurrentOptions(client, productNo);
             const keptOptionNos = new Set();
 
