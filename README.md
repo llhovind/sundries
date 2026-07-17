@@ -32,13 +32,52 @@ to multi-instance cloud deployments. The difference is configuration, not code.
 
 ---
 
+## Application surface
+
+**Storefront** (`/shop`): catalog with option variants and measured (cut-to-length)
+goods, cart, member + guest checkout, promotions, order history with per-line
+return requests. Login is passwordless — emailed one-time codes with a
+brute-force lockout — and sessions use rotating refresh tokens: reuse of a
+retired token revokes the whole token family.
+
+**Staff UI**: a permission-filtered sidebar (staff see only the links their
+roles can use) grouped as **Sales** (Orders, Returns, Customers), **Catalog**
+(Products, Categories, Promotions), **Inventory** (Stock, Transfers,
+Purchasing), **Admin** (Users, Roles, Settings), plus **Reports**:
+
+* **Inventory** — multi-warehouse stock with FIFO cost layers; transfers move
+  stock through an in-transit `transport` warehouse; purchase orders receive
+  at line level and write costed IN ledger rows. Received stock fills
+  backorders and sends back-in-stock notifications automatically (1-minute job).
+* **Orders** — fulfillment with capture-on-first-ship and partial shipments,
+  refunds (cumulative-guarded), and an RMA queue with a configurable return
+  window (`returns.window_days`) and suggested-refund prefill.
+* **Admin** — user management (staff filters, multi-role grants), a roles &
+  permissions editor (guarded by `roles:manage`; `admin`/`customer` roles are
+  locked), and store settings (§5). Endpoint permissions live in
+  `backend/config/routePermissions.js`, a code-only map validated against the
+  live router and the `permissions` table at boot — an unguarded endpoint or
+  unknown permission code fails startup.
+* **Reports** — each report is one self-contained file in
+  `backend/controllers/reports/` (metadata + params + columns + SQL),
+  discovered at boot; access is per category permission
+  (`reports:sales|finance|inventory|purchasing`). Reports run immediately or
+  as stored runs (detached subprocess via `bin/reportRunner.js`, JSONB
+  snapshot, CSV download, completion email), and can declare a cron schedule.
+  Adding a report is one file; a broken report file is logged and skipped,
+  never crashes the API.
+
+GDPR/CCPA request intake exists (`POST /api/v1/compliance/requests`), but
+processing is deliberately semi-manual — see the flagged stub notes in
+`backend/services/complianceService.js`.
+
+---
+
 ## 1. Local development
 
 ### Prerequisites
 
-* Node.js 20+ recommended (18.14+ works today, but Node 18 is end-of-life and the
-  planned job-queue dependency, pg-boss v10, requires 20+ — plan the upgrade before
-  production)
+* Node.js 20+ (the job-queue dependency, pg-boss v10, requires it)
 * A reachable PostgreSQL 13+ (15 recommended). Not bundled — point at any host you have,
   or run one with Docker: `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=dev postgres:15`
 
@@ -103,10 +142,11 @@ point a Stripe webhook at `POST /api/v1/payments/webhook/stripe`.
 cd backend && npm test
 ```
 
-The inventory tests (`tests/inventoryService.test.js`) exercise the DB triggers and
-reservation functions for real, so they need a **disposable** database: create one, run
-`npm run migrate` against it, point `.env` at it. Ledger rows are append-only by design;
-recreate the test DB rather than trying to clean it.
+The suites are integration-style: they exercise the real DB triggers, reservation
+functions, and the full route→controller→service path, so they need a **disposable**
+database: create one, run `npm run migrate` against it, point `.env` at it. Ledger
+rows are append-only by design; recreate the test DB rather than trying to clean it.
+(Mail is forced to the `noop` adapter during tests.)
 
 ---
 
@@ -145,8 +185,10 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
    ```
 
 5. Cron: only the backup needs external scheduling — background jobs
-   (reservation sweeper, search indexing, partition maintenance, emails,
-   fraud screening) run inside the API process via pg-boss by default:
+   (reservation sweeper, backorder fulfillment + back-in-stock notifications,
+   search indexing, emails, fraud screening, scheduled reports, daily sales
+   rollup, partition and refresh-token maintenance) run inside the API
+   process via pg-boss by default:
 
    ```cron
    # nightly logical backup at 02:15 (see §4)
@@ -179,7 +221,7 @@ availability with Multi-AZ.
 | Connections | PgBouncer (transaction pooling) between API fleet and Postgres once instances × `DB_POOL_MAX` approaches the DB's `max_connections` |
 | Reads | Route heavy catalog/report reads to a read replica (introduce a second pool in `common/db.js` when needed) |
 | Ledger growth | Set `inventory.partition_months` (e.g. `3`) and schedule `SELECT fn_ensure_inventory_partitions(3);` monthly — **enable this from day one on high-volume shops**; carving partitions after rows exist in the default partition requires manual data movement |
-| Background jobs | Set `JOBS_INLINE=false` on the API fleet; run `npm run worker` on 1–2 dedicated instances (pg-boss coordinates via Postgres — sweeper, search indexing, emails, fraud screening, partition maintenance) |
+| Background jobs | Set `JOBS_INLINE=false` on the API fleet; run `npm run worker` on 1–2 dedicated instances (pg-boss coordinates via Postgres — sweeper, backorders, search indexing, emails, fraud screening, scheduled reports, partition/token maintenance) |
 | Search | OpenSearch on its own server/managed domain (`SEARCH_PROVIDER=opensearch`, `npm i @opensearch-project/opensearch`); catalog changes flow through the `search_outbox` table so index updates survive OpenSearch downtime |
 | Email | SES adapter (`MAIL_PROVIDER=ses`, `npm i @aws-sdk/client-sesv2`); keep SMTP for small installs |
 | Images | Object storage (S3) + CDN instead of the local `uploads/` directory — required as soon as there are 2 API instances |
@@ -211,7 +253,9 @@ Simple, provider-independent, restore-tested:
 
 ## 5. Configuration reference
 
-Environment (`backend/.env`, validated at startup — see `common/config.js`):
+Environment (`backend/.env`, validated at startup — see `common/config.js`;
+unknown provider names or missing provider credentials fail the boot with every
+problem reported at once):
 
 | Variable | Purpose |
 |---|---|
@@ -219,15 +263,24 @@ Environment (`backend/.env`, validated at startup — see `common/config.js`):
 | `DB_SSL` | `true` (verify certs — production), `no-verify` (self-signed), `false` (local) |
 | `DB_POOL_MAX` | Pool size per API instance (default 10) |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Token signing (32+ random chars each) |
+| `JWT_ACCESS_EXPIRES` / `JWT_REFRESH_EXPIRES` | Access-token lifetime (default `15m`) / refresh sliding window in days (default 7) |
+| `MAIL_PROVIDER` | `smtp` (default) / `ses` / `noop`; `SMTP_*` only required for smtp, SES needs `SES_FROM` or `SMTP_FROM` |
 | `SMTP_*` | Mail relay for OTP login codes and notifications |
+| `PAYMENT_PROVIDER` | `fake` (default — refused in production without `ALLOW_FAKE_PAYMENTS=true`) / `stripe` (requires `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) |
+| `SEARCH_PROVIDER` | `postgres` (default) / `opensearch` (with `OPENSEARCH_URL`, `OPENSEARCH_INDEX`) |
+| `JOBS_INLINE` | `false` moves background jobs off the API onto `npm run worker` instances |
 | `ADMIN_EMAIL`, `ADMIN_USERNAME` | Initial admin created by `db/bootstrap.js` (OTP login, no password) |
 | `BACKUP_DIR`, `BACKUP_RETENTION_DAYS` | Used by `db/backup.sh` |
 | `COOKIE_SECURE`, `NODE_ENV`, `PORT` | Runtime behavior |
 
-Store-tunable settings live in the `app_settings` table (admin-editable):
-`reservations.ttl_minutes` (default 15), `inventory.partition_months` (−1 = off),
-`checkout.guest_enabled`, `mail.provider`, `search.provider`, `tax.provider`,
-`store.name`, `store.currency`.
+Store-tunable settings live in the `app_settings` table, editable in the admin
+UI at `/admin/settings` (guarded by `settings:manage` — values only, keys are
+code-defined): `reservations.ttl_minutes` (default 15), `returns.window_days`
+(default 30, ≤ 0 disables the window), `inventory.partition_months` (−1 = off),
+`checkout.guest_enabled`, `shipping.free_threshold`, `mail.provider`,
+`search.provider`, `tax.provider`, `store.name`, `store.currency`. The same UI
+manages shipping rules, weight-surcharge bands, tax rates, and warehouses
+(create/edit/soft-disable — no deletes).
 
 ---
 
