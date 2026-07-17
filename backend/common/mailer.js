@@ -13,6 +13,7 @@
  *   sendOrderEvent(event, order, to)     - order lifecycle notifications
  *   sendRmaEvent(event, rma, to)         - returns (RMA) lifecycle notifications
  *   sendBackInStock(to, product)         - back-in-stock notification
+ *   sendReportReady(to, run)             - stored report run finished
  */
 
 const { getMailProvider } = require('../services/mail');
@@ -140,4 +141,24 @@ function sendBackInStock(recipient, product = {}) {
     return send({ to: recipient, subject, text });
 }
 
-module.exports = { sendOTP, sendOrderEvent, sendRmaEvent, sendBackInStock };
+/**
+ * Stored report run finished (succeeded or failed).
+ * Fire-and-forget at call sites — callers should .catch() but not await.
+ *
+ * @param {string} recipient - destination address
+ * @param {{name:string, run_no:number, status:string, error:?string}} run
+ */
+function sendReportReady(recipient, run) {
+    const ok = run.status === 'succeeded';
+    const subject = ok
+        ? `Report ready: ${run.name}`
+        : `Report failed: ${run.name}`;
+    const text = ok
+        ? `${subject}\n\nYour "${run.name}" report (run #${run.run_no}) has finished and is ` +
+          `ready to view or download from Reports in the store admin.`
+        : `${subject}\n\nGenerating "${run.name}" (run #${run.run_no}) did not complete: ` +
+          `${run.error || 'unknown error'}. You can retry it from Reports in the store admin.`;
+    return send({ to: recipient, subject, text });
+}
+
+module.exports = { sendOTP, sendOrderEvent, sendRmaEvent, sendBackInStock, sendReportReady };

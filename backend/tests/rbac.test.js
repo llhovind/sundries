@@ -45,7 +45,7 @@ describe('given seeded roles when permissions are resolved then grants match job
     test('given a finance user when resolved then refunds and COGS are held but user management is not', async () => {
         const u = await makeUser('finance', 'fin');
         const perms = await Rbac.getPermissionsForUser(u.id);
-        expect(perms).toEqual(expect.arrayContaining(['refunds:create', 'reports:cogs', 'orders:read']));
+        expect(perms).toEqual(expect.arrayContaining(['refunds:create', 'reports:finance', 'orders:read']));
         expect(perms).not.toContain('users:manage');
         expect(perms).not.toContain('inventory:adjust');
     });

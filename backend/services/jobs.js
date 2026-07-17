@@ -23,6 +23,10 @@ function log(level, msg, extra = {}) {
  *   search-outbox        every minute — drain catalog changes into the search index
  *   partition-maintenance daily 03:10 — pre-create ledger partitions when enabled
  *   auth-token-purge     daily 03:40 — drop refresh tokens past forensic retention
+ *   report-run-reaper    hourly    — fail report runs whose runner died
+ *   report-<slug>        per report — stored reports declaring a cron
+ *                        schedule are discovered from the report registry
+ *                        and generated on their own schedule
  *
  * Queued work (enqueued by services via Jobs.send):
  *   email        {event, order, to}   — order lifecycle mail through the mail port
@@ -44,6 +48,7 @@ const Jobs = (function () {
         ROLLUP:       'daily-rollup',
         COMPLIANCE:   'compliance-request',
         AUTH_PURGE:   'auth-token-purge',
+        REPORT_REAP:  'report-run-reaper',
     };
 
     // Handlers are lazy-required to avoid circular imports (paymentsService
@@ -99,6 +104,11 @@ const Jobs = (function () {
             const { purged } = await RefreshTokens.purgeExpired();
             if (purged) log('info', 'expired refresh tokens purged', { purged });
         },
+        [QUEUES.REPORT_REAP]: async () => {
+            const ReportRuns = require('../models/reportRuns');
+            const reaped = await ReportRuns.failStale();
+            if (reaped) log('warn', 'abandoned report runs failed', { reaped });
+        },
         [QUEUES.PARTITION]: async () => {
             const Settings = require('../common/settings');
             const months = await Settings.getNumber('inventory.partition_months', -1);
@@ -150,6 +160,23 @@ const Jobs = (function () {
         await instance.schedule(QUEUES.PARTITION, '10 3 * * *');
         await instance.schedule(QUEUES.ROLLUP,    '30 0 * * *');
         await instance.schedule(QUEUES.AUTH_PURGE, '40 3 * * *');
+        await instance.schedule(QUEUES.REPORT_REAP, '20 * * * *');
+
+        // Scheduled stored reports — one queue per report, discovered from
+        // the registry so adding a scheduled report never touches this file.
+        // Lazy-required like the handlers: the registry pulls in every
+        // report controller.
+        const reportRegistry = require('./reporting/registry');
+        const RunService     = require('./reporting/runService');
+        for (const def of reportRegistry.scheduled()) {
+            const queue = `report-${def.slug}`;
+            await instance.createQueue(queue);
+            await instance.work(queue, { batchSize: 1 }, async () => {
+                await RunService.runScheduled(def.slug);
+            });
+            await instance.schedule(queue, def.schedule);
+            log('info', 'scheduled report registered', { report: def.slug, cron: def.schedule });
+        }
 
         boss = instance;
         log('info', 'job runner started', { queues: Object.values(QUEUES) });

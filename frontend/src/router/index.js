@@ -50,8 +50,11 @@ const router = createRouter({
           meta: { requiresPerm: ['rma:manage', 'refunds:create'] } },
         { path: 'admin/orders',     name: 'admin-orders',     component: OrdersAdminView,
           meta: { requiresPerm: ['orders:read', 'orders:fulfill'] } },
+        // Report visibility is per category — any one category permission
+        // opens the view; the catalog inside shows only permitted categories.
         { path: 'admin/reports',    name: 'admin-reports',    component: ReportsView,
-          meta: { requiresPerm: ['reports:view', 'reports:cogs'] } },
+          meta: { requiresPerm: ['reports:sales', 'reports:finance',
+                                 'reports:inventory', 'reports:purchasing'] } },
         { path: 'admin/promotions', name: 'admin-promotions', component: PromotionsView,
           meta: { requiresPerm: ['promotions:manage'] } },
         { path: 'categories',       name: 'categories',       component: CategoriesView,

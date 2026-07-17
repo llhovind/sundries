@@ -17,6 +17,12 @@ const requirePermission = require('../middleware/requirePermission');
  * Keys are 'METHOD <full path as registered in Express>' (param names
  * included). A route listing several codes allows callers holding ANY one.
  */
+// Every report-category permission (reports:sales, reports:finance, …) —
+// sourced from the reporting system so a new category can't silently miss
+// its route guard.
+const REPORT_CATEGORY_PERMS =
+    require('../services/reporting/categories').ALL_CATEGORY_PERMISSIONS;
+
 const ROUTE_PERMS = Object.freeze({
     // ── Catalog ──────────────────────────────────────────────────────────
     'POST /api/v1/products':                       ['catalog:write'],
@@ -74,11 +80,18 @@ const ROUTE_PERMS = Object.freeze({
     'POST /api/v1/rmas/:rma_no/refund':            ['refunds:create'],
 
     // ── Reports ──────────────────────────────────────────────────────────
-    'GET /api/v1/reports/cogs':                    ['reports:cogs'],
-    'GET /api/v1/reports/valuation':               ['reports:cogs'],
-    'GET /api/v1/reports/shrinkage':               ['reports:cogs'],
-    'GET /api/v1/reports/reservations':            ['reports:view'],
-    'GET /api/v1/reports/sales-summary':           ['reports:view'],
+    // Report access is per CATEGORY (sales / finance / inventory /
+    // purchasing). The generic :slug routes list every category code here —
+    // the widest possible grant — and requireReportAccess narrows each
+    // request to the addressed report's own category permission at runtime
+    // (resolved through services/reporting/registry). The catalog route is a
+    // plain any-of guard; its handler filters to what the caller holds.
+    'GET /api/v1/reports':                                   REPORT_CATEGORY_PERMS,
+    'GET /api/v1/reports/:slug/results':                     REPORT_CATEGORY_PERMS,
+    'POST /api/v1/reports/:slug/runs':                       REPORT_CATEGORY_PERMS,
+    'GET /api/v1/reports/:slug/runs':                        REPORT_CATEGORY_PERMS,
+    'GET /api/v1/reports/:slug/runs/:run_no':                REPORT_CATEGORY_PERMS,
+    'GET /api/v1/reports/:slug/runs/:run_no/download':       REPORT_CATEGORY_PERMS,
 
     // ── User administration ──────────────────────────────────────────────
     'GET /api/v1/users':                           ['users:manage'],

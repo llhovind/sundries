@@ -105,12 +105,12 @@ describe('given role lifecycle operations when performed then guard rails hold',
     });
 
     test('given a permission replace then holders resolve the new set via fn_user_permissions', async () => {
-        const set1 = await api().put(`/${CODE}/permissions`, { permissions: ['orders:read', 'reports:view'] });
+        const set1 = await api().put(`/${CODE}/permissions`, { permissions: ['orders:read', 'reports:inventory'] });
         expect(set1.status).toBe(200);
-        expect(set1.body.content.permissions.sort()).toEqual(['orders:read', 'reports:view']);
+        expect(set1.body.content.permissions.sort()).toEqual(['orders:read', 'reports:inventory']);
 
         const holder = await Users.create({ email: `roles-holder-${RUN}@example.com`, role: CODE }, 1);
-        expect((await Rbac.getPermissionsForUser(holder.id)).sort()).toEqual(['orders:read', 'reports:view']);
+        expect((await Rbac.getPermissionsForUser(holder.id)).sort()).toEqual(['orders:read', 'reports:inventory']);
 
         const set2 = await api().put(`/${CODE}/permissions`, { permissions: ['orders:read'] });
         expect(set2.status).toBe(200);
