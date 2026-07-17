@@ -91,7 +91,8 @@ const Products = (function () {
                 db.query(
                     `SELECT v.variant_no, v.sku, v.price, v.status, v.weight_lbs, v.primary_image, v.position,
                             COALESCE(av.qty_available, 0) AS qty_available,
-                            COALESCE(JSON_AGG(JSON_BUILD_OBJECT('value_no', vv.value_no, 'value', ov.value, 'option', o.name)
+                            COALESCE(JSON_AGG(JSON_BUILD_OBJECT('value_no', vv.value_no, 'value', ov.value,
+                                                                'option', o.name, 'option_no', o.option_no)
                                      ORDER BY o.position)
                                      FILTER (WHERE vv.value_no IS NOT NULL), '[]') AS option_values
                      FROM product_variants v
@@ -144,7 +145,8 @@ const Products = (function () {
 
     /**
      * Creates or updates a variant. valueNos (option values) are replaced
-     * when provided.
+     * when provided, and must form a complete, unique combination: exactly
+     * one value for every option the product defines.
      */
     function upsertVariant(productNo, data, userId) {
         const { variant_no, sku, price, status, weight_lbs, position, valueNos } = data;
@@ -163,6 +165,9 @@ const Products = (function () {
                      weight_lbs ?? null, position ?? null, userId, productNo]
                 );
                 if (!res.rows.length) throw Object.assign(new Error('Variant not found'), { status: 404 });
+                if (valueNos !== undefined) {
+                    await replaceVariantValues(client, productNo, variantNo, valueNos);
+                }
             } else {
                 if (!sku || price == null) {
                     throw Object.assign(new Error('sku and price are required for a new variant'), { status: 400 });
@@ -175,41 +180,176 @@ const Products = (function () {
                     [productNo, sku, price, status ?? null, weight_lbs ?? null, position ?? null, userId]
                 );
                 variantNo = res.rows[0].variant_no;
-            }
-            if (Array.isArray(valueNos)) {
-                await client.query(`DELETE FROM product_variant_values WHERE variant_no = $1`, [variantNo]);
-                for (const valueNo of valueNos) {
-                    await client.query(
-                        `INSERT INTO product_variant_values (variant_no, value_no) VALUES ($1, $2)`,
-                        [variantNo, valueNo]);
-                }
+                await replaceVariantValues(client, productNo, variantNo, valueNos ?? []);
             }
             return variantNo;
         });
     }
 
+    /** Validates valueNos against the product's options, then replaces the variant's links. */
+    async function replaceVariantValues(client, productNo, variantNo, valueNos) {
+        await assertValidCombination(client, productNo, variantNo, valueNos);
+        await client.query(`DELETE FROM product_variant_values WHERE variant_no = $1`, [variantNo]);
+        for (const valueNo of valueNos) {
+            await client.query(
+                `INSERT INTO product_variant_values (variant_no, value_no) VALUES ($1, $2)`,
+                [variantNo, valueNo]);
+        }
+    }
+
     /**
-     * Replaces a product's option definitions (e.g. Color: Red, Blue).
+     * A combination is valid when it picks exactly one value per product
+     * option and no sibling variant already claims the same set.
+     */
+    async function assertValidCombination(client, productNo, variantNo, valueNos) {
+        const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
+
+        const { rows: optionValues } = await client.query(
+            `SELECT ov.value_no, o.option_no, o.name
+             FROM product_options o
+             JOIN product_option_values ov ON ov._option_no = o.option_no
+             WHERE o._product_no = $1`,
+            [productNo]);
+
+        const byValueNo  = new Map(optionValues.map(r => [Number(r.value_no), r]));
+        const optionNos  = new Set(optionValues.map(r => Number(r.option_no)));
+        const seenOption = new Map();
+
+        for (const valueNo of valueNos) {
+            const row = byValueNo.get(Number(valueNo));
+            if (!row) fail(400, `Option value ${valueNo} does not belong to this product`);
+            const optionNo = Number(row.option_no);
+            if (seenOption.has(optionNo)) {
+                fail(400, `Only one value allowed for option "${row.name}"`);
+            }
+            seenOption.set(optionNo, valueNo);
+        }
+        if (seenOption.size < optionNos.size) {
+            const missing = optionValues.find(r => !seenOption.has(Number(r.option_no)));
+            fail(400, `A value for option "${missing.name}" is required`);
+        }
+        if (!valueNos.length) return;
+
+        const sorted = [...valueNos].map(Number).sort((a, b) => a - b);
+        const { rows: dup } = await client.query(
+            `SELECT vv.variant_no
+             FROM product_variant_values vv
+             JOIN product_variants pv ON pv.variant_no = vv.variant_no
+             WHERE pv._product_no = $1 AND vv.variant_no <> $2
+             GROUP BY vv.variant_no
+             HAVING ARRAY_AGG(vv.value_no ORDER BY vv.value_no) = $3::bigint[]
+             LIMIT 1`,
+            [productNo, variantNo, sorted]);
+        if (dup.length) {
+            fail(409, 'Another variant already uses this option combination');
+        }
+    }
+
+    /**
+     * Reconciles a product's option definitions (e.g. Color: Red, Blue)
+     * against the desired state. Unchanged options/values are kept in place
+     * so existing variant links survive; removals of values still assigned
+     * to variants are rejected. Renames are treated as remove + add.
      * options: [{name, values: ['Red','Blue']}]
      */
     function setOptions(productNo, options, _userId) {
         return withTransaction(async (client) => {
-            await client.query(`DELETE FROM product_options WHERE _product_no = $1`, [productNo]);
+            const current = await loadCurrentOptions(client, productNo);
+            const keptOptionNos = new Set();
+
             for (let i = 0; i < options.length; i++) {
-                const opt = options[i];
-                const oRes = await client.query(
-                    `INSERT INTO product_options (_product_no, name, position)
-                     VALUES ($1, $2, $3) RETURNING option_no`,
-                    [productNo, opt.name, i]);
-                for (let j = 0; j < (opt.values || []).length; j++) {
-                    await client.query(
-                        `INSERT INTO product_option_values (_option_no, value, position)
-                         VALUES ($1, $2, $3)`,
-                        [oRes.rows[0].option_no, opt.values[j], j]);
-                }
+                const opt      = options[i];
+                const existing = current.get(opt.name);
+                const optionNo = existing
+                    ? await reconcileOption(client, existing, opt.values || [], i)
+                    : await insertOption(client, productNo, opt.name, opt.values || [], i);
+                keptOptionNos.add(optionNo);
+            }
+
+            for (const existing of current.values()) {
+                if (keptOptionNos.has(existing.option_no)) continue;
+                await assertValuesUnused(client, [...existing.values.values()],
+                    `Cannot remove option "${existing.name}"`);
+                await client.query(`DELETE FROM product_options WHERE option_no = $1`, [existing.option_no]);
             }
             return productNo;
         });
+    }
+
+    /** Current options keyed by name: name → {option_no, name, values: Map(value → value_no)}. */
+    async function loadCurrentOptions(client, productNo) {
+        const { rows } = await client.query(
+            `SELECT o.option_no, o.name, ov.value_no, ov.value
+             FROM product_options o
+             LEFT JOIN product_option_values ov ON ov._option_no = o.option_no
+             WHERE o._product_no = $1`,
+            [productNo]);
+        const byName = new Map();
+        for (const row of rows) {
+            if (!byName.has(row.name)) {
+                byName.set(row.name, { option_no: Number(row.option_no), name: row.name, values: new Map() });
+            }
+            if (row.value_no != null) byName.get(row.name).values.set(row.value, Number(row.value_no));
+        }
+        return byName;
+    }
+
+    async function insertOption(client, productNo, name, values, position) {
+        const { rows } = await client.query(
+            `INSERT INTO product_options (_product_no, name, position)
+             VALUES ($1, $2, $3) RETURNING option_no`,
+            [productNo, name, position]);
+        const optionNo = Number(rows[0].option_no);
+        for (let j = 0; j < values.length; j++) {
+            await client.query(
+                `INSERT INTO product_option_values (_option_no, value, position)
+                 VALUES ($1, $2, $3)`,
+                [optionNo, values[j], j]);
+        }
+        return optionNo;
+    }
+
+    /** Diffs one existing option's values against the desired list. */
+    async function reconcileOption(client, existing, values, position) {
+        await client.query(
+            `UPDATE product_options SET position = $2 WHERE option_no = $1`,
+            [existing.option_no, position]);
+
+        const removed = [...existing.values.entries()].filter(([value]) => !values.includes(value));
+        if (removed.length) {
+            await assertValuesUnused(client, removed.map(([, valueNo]) => valueNo),
+                `Cannot remove value(s) ${removed.map(([value]) => `"${value}"`).join(', ')} of option "${existing.name}"`);
+            await client.query(
+                `DELETE FROM product_option_values WHERE value_no = ANY($1::bigint[])`,
+                [removed.map(([, valueNo]) => valueNo)]);
+        }
+        for (let j = 0; j < values.length; j++) {
+            const valueNo = existing.values.get(values[j]);
+            if (valueNo) {
+                await client.query(
+                    `UPDATE product_option_values SET position = $2 WHERE value_no = $1`,
+                    [valueNo, j]);
+            } else {
+                await client.query(
+                    `INSERT INTO product_option_values (_option_no, value, position)
+                     VALUES ($1, $2, $3)`,
+                    [existing.option_no, values[j], j]);
+            }
+        }
+        return existing.option_no;
+    }
+
+    /** Rejects deletion of option values that variants still reference. */
+    async function assertValuesUnused(client, valueNos, context) {
+        if (!valueNos.length) return;
+        const { rows } = await client.query(
+            `SELECT 1 FROM product_variant_values WHERE value_no = ANY($1::bigint[]) LIMIT 1`,
+            [valueNos]);
+        if (rows.length) {
+            throw Object.assign(
+                new Error(`${context}: it is still assigned to one or more variants. Update or remove those variants first.`),
+                { status: 409 });
+        }
     }
 
 }());

@@ -110,6 +110,105 @@ describe('given the products API when the catalog is managed then storefront and
     });
 });
 
+describe('given variant option combinations when variants and options are saved then the wiring is validated', () => {
+
+    let productNo, color, size;
+    const staffGet = () => request(app).get(`/api/v1/products/${productNo}`)
+        .set('Authorization', `Bearer ${staffToken()}`).then(r => r.body.content.product);
+    const postVariant = (body) => request(app).post(`/api/v1/products/${productNo}/variants`)
+        .set('Authorization', `Bearer ${staffToken()}`).send(body);
+    const putOptions = (options) => request(app).put(`/api/v1/products/${productNo}/options`)
+        .set('Authorization', `Bearer ${staffToken()}`).send({ options });
+    const val = (opt, v) => opt.values.find(x => x.value === v).value_no;
+
+    beforeAll(async () => {
+        const created = await request(app).post('/api/v1/products')
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ name: `Combo ${RUN}`, status: 'active' });
+        productNo = created.body.content.product_no;
+        await putOptions([{ name: 'Color', values: ['Red', 'Blue'] },
+                          { name: 'Size',  values: ['S', 'M'] }]);
+        const product = await staffGet();
+        color = product.options.find(o => o.name === 'Color');
+        size  = product.options.find(o => o.name === 'Size');
+    });
+
+    test('given a complete combination then the variant is created with its option values', async () => {
+        const res = await postVariant({ sku: `CMB-${RUN}-RED-S`, price: 10,
+                                        valueNos: [val(color, 'Red'), val(size, 'S')] });
+        expect(res.status).toBe(201);
+        const product = await staffGet();
+        const v = product.variants.find(x => x.sku === `CMB-${RUN}-RED-S`);
+        expect(v.option_values).toHaveLength(2);
+        expect(v.option_values.map(ov => ov.value).sort()).toEqual(['Red', 'S']);
+    });
+
+    test('given a missing option value then the variant is rejected', async () => {
+        const res = await postVariant({ sku: `CMB-${RUN}-X1`, price: 10,
+                                        valueNos: [val(color, 'Blue')] });
+        expect(res.status).toBe(400);
+        expect(res.body.outcome.message).toMatch(/Size/);
+    });
+
+    test('given two values of the same option then the variant is rejected', async () => {
+        const res = await postVariant({ sku: `CMB-${RUN}-X2`, price: 10,
+                                        valueNos: [val(color, 'Red'), val(color, 'Blue'), val(size, 'M')] });
+        expect(res.status).toBe(400);
+        expect(res.body.outcome.message).toMatch(/one value/i);
+    });
+
+    test('given an already-used combination then the variant is rejected as a duplicate', async () => {
+        const res = await postVariant({ sku: `CMB-${RUN}-DUP`, price: 12,
+                                        valueNos: [val(size, 'S'), val(color, 'Red')] });
+        expect(res.status).toBe(409);
+    });
+
+    test('given a value_no from another product then the variant is rejected', async () => {
+        const res = await postVariant({ sku: `CMB-${RUN}-X3`, price: 10,
+                                        valueNos: [999999999, val(size, 'S')] });
+        expect(res.status).toBe(400);
+    });
+
+    test('given options resubmitted with a new value then existing variant links survive', async () => {
+        const res = await putOptions([{ name: 'Color', values: ['Red', 'Blue', 'Green'] },
+                                      { name: 'Size',  values: ['S', 'M'] }]);
+        expect(res.status).toBe(200);
+        const product = await staffGet();
+        expect(product.options.find(o => o.name === 'Color').values).toHaveLength(3);
+        const v = product.variants.find(x => x.sku === `CMB-${RUN}-RED-S`);
+        expect(v.option_values.map(ov => ov.value).sort()).toEqual(['Red', 'S']);
+    });
+
+    test('given removal of a value still assigned to a variant then options save is rejected', async () => {
+        const res = await putOptions([{ name: 'Color', values: ['Blue', 'Green'] },
+                                      { name: 'Size',  values: ['S', 'M'] }]);
+        expect(res.status).toBe(409);
+        const product = await staffGet();
+        expect(product.options.find(o => o.name === 'Color').values.map(x => x.value)).toContain('Red');
+    });
+
+    test('given a duplicate option name in the payload then options save is rejected', async () => {
+        const res = await putOptions([{ name: 'Color', values: ['Red'] },
+                                      { name: 'Color', values: ['Blue'] }]);
+        expect(res.status).toBe(400);
+    });
+
+    test('given a product without options then a plain variant saves and valueNos are rejected', async () => {
+        const created = await request(app).post('/api/v1/products')
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ name: `NoOpts ${RUN}`, status: 'active' });
+        const plainNo = created.body.content.product_no;
+        const ok = await request(app).post(`/api/v1/products/${plainNo}/variants`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ sku: `NOOPT-${RUN}`, price: 5 });
+        expect(ok.status).toBe(201);
+        const bad = await request(app).post(`/api/v1/products/${plainNo}/variants`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ sku: `NOOPT-${RUN}-B`, price: 5, valueNos: [val(size, 'S')] });
+        expect(bad.status).toBe(400);
+    });
+});
+
 describe('given the cart API when a shopper builds a cart then lines carry snapshots and live prices', () => {
 
     async function makeStockedVariant(tag, price = 12) {

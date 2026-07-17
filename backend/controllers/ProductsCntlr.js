@@ -79,9 +79,45 @@ const ProductsCntlr = function () {
             .catch(err => next({ status: err.status || 500, message: err.message }));
     }
 
+    /** Shape check only — combination rules (one value per option, uniqueness) live in the model. */
+    function invalidValueNos(valueNos) {
+        if (valueNos === undefined) return null;
+        if (!Array.isArray(valueNos) || valueNos.some(v => !Number.isInteger(Number(v)) || Number(v) <= 0)) {
+            return 'valueNos must be an array of option value ids';
+        }
+        return null;
+    }
+
+    /** Shape check for the options payload: unique non-empty names, unique non-empty values. */
+    function invalidOptions(options) {
+        const names = new Set();
+        for (const opt of options) {
+            if (!opt || typeof opt.name !== 'string' || !opt.name.trim()) {
+                return 'each option requires a non-empty name';
+            }
+            const name = opt.name.trim();
+            if (names.has(name)) return `duplicate option "${name}"`;
+            names.add(name);
+            if (opt.values !== undefined && !Array.isArray(opt.values)) {
+                return `values of option "${name}" must be an array`;
+            }
+            const values = new Set();
+            for (const value of opt.values || []) {
+                if (typeof value !== 'string' || !value.trim()) {
+                    return `option "${name}" has an empty value`;
+                }
+                if (values.has(value.trim())) return `option "${name}" has duplicate value "${value.trim()}"`;
+                values.add(value.trim());
+            }
+        }
+        return null;
+    }
+
     function upsertVariant(req, res, next) {
         const productNo = parseInt(req.params.product_no, 10);
         if (isNaN(productNo)) return next({ status: 400, message: 'Invalid product_no' });
+        const shapeError = invalidValueNos(req.body?.valueNos);
+        if (shapeError) return next({ status: 400, message: shapeError });
         Promise.resolve()
             .then(() => Products.upsertVariant(productNo, req.body || {}, req.user.id))
             .then(variantNo => {
@@ -98,7 +134,13 @@ const ProductsCntlr = function () {
         if (isNaN(productNo)) return next({ status: 400, message: 'Invalid product_no' });
         const { options } = req.body || {};
         if (!Array.isArray(options)) return next({ status: 400, message: 'options array is required' });
-        Products.setOptions(productNo, options, req.user.id)
+        const shapeError = invalidOptions(options);
+        if (shapeError) return next({ status: 400, message: shapeError });
+        const normalized = options.map(o => ({
+            name:   o.name.trim(),
+            values: (o.values || []).map(v => v.trim()),
+        }));
+        Products.setOptions(productNo, normalized, req.user.id)
             .then(() => {
                 res.locals.results = { product_no: productNo };
                 res.locals.status  = 200;
