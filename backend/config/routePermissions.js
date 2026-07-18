@@ -74,6 +74,7 @@ const ROUTE_PERMS = Object.freeze({
 
     // ── Orders, payments, returns ────────────────────────────────────────
     'POST /api/v1/orders/:ord_no/ship':            ['orders:fulfill'],
+    'PUT /api/v1/orders/:ord_no/shipments/:shipment_no': ['orders:fulfill'],
     'POST /api/v1/payments/:ord_no/refund':        ['refunds:create'],
     'PUT /api/v1/rmas/:rma_no/status':             ['rma:manage'],
     'POST /api/v1/rmas/:rma_no/receive':           ['rma:manage'],

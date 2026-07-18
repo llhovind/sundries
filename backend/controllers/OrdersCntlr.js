@@ -1,13 +1,14 @@
 'use strict';
 
 const Orders             = require('../models/orders');
+const Shipments          = require('../models/shipments');
 const Rbac               = require('../models/rbac');
 const FulfillmentService = require('../services/fulfillmentService');
 const Pagination         = require('../common/pagination');
 
 const OrdersCntlr = function () {
 
-    return { list, findOne, ship };
+    return { list, findOne, ship, updateShipment };
 
     /** Loads req.user.perms when the token predates the perms claim. */
     async function perms(req) {
@@ -58,7 +59,7 @@ const OrdersCntlr = function () {
         const ordNo = parseInt(req.params.ord_no, 10);
         if (isNaN(ordNo)) return next({ status: 400, message: 'Invalid order number' });
         try {
-            const result = await FulfillmentService.shipOrder(ordNo, req.user.id);
+            const result = await FulfillmentService.shipOrder(ordNo, req.user.id, req.body || {});
             res.locals.results = result;
             res.locals.status  = 200;
             res.locals.message = result.status === 'partially_shipped'
@@ -67,6 +68,26 @@ const OrdersCntlr = function () {
             next();
         } catch (err) {
             next({ status: err.status || 500, message: err.message || 'Ship failed' });
+        }
+    }
+
+    // PUT /api/v1/orders/:ord_no/shipments/:shipment_no — correct/complete
+    // carrier, tracking number or notes after the ship action.
+    async function updateShipment(req, res, next) {
+        const ordNo      = parseInt(req.params.ord_no, 10);
+        const shipmentNo = parseInt(req.params.shipment_no, 10);
+        if (isNaN(ordNo) || isNaN(shipmentNo)) {
+            return next({ status: 400, message: 'Invalid order or shipment number' });
+        }
+        try {
+            const shipment = await Shipments.updateTracking(shipmentNo, ordNo, req.body || {}, req.user.id);
+            if (!shipment) return next({ status: 404, message: 'Shipment not found for this order' });
+            res.locals.results = { shipment };
+            res.locals.status  = 200;
+            res.locals.message = 'Shipment updated';
+            next();
+        } catch (err) {
+            next({ status: err.status || 500, message: err.message || 'Shipment update failed' });
         }
     }
 

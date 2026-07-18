@@ -2,6 +2,7 @@
 
 const { withTransaction } = require('../common/db');
 const Orders          = require('../models/orders');
+const Shipments       = require('../models/shipments');
 const PaymentsService = require('./paymentsService');
 const { log } = require('../common/logger');
 
@@ -35,9 +36,13 @@ const FulfillmentService = (function () {
     /**
      * @param {number} ordNo
      * @param {number} actorUserId - staff member driving the ship (orders:fulfill)
-     * @returns {Promise<{ord_no:number, status:'shipped'|'partially_shipped'}>}
+     * @param {{carrier?:string, tracking_no?:string, notes?:string}} [details]
+     *        package details for this ship event; all optional (tracking can
+     *        be added later via Shipments.updateTracking)
+     * @returns {Promise<{ord_no:number, status:'shipped'|'partially_shipped', shipment_no:number}>}
      */
-    async function shipOrder(ordNo, actorUserId) {
+    async function shipOrder(ordNo, actorUserId, details = {}) {
+        const shipmentDetails = Shipments.validateDetails(details);
         const order = await Orders.findOne(ordNo, { staff: true });
         if (!order) {
             throw Object.assign(new Error('Order not found'), { status: 404 });
@@ -55,16 +60,20 @@ const FulfillmentService = (function () {
 
         await PaymentsService.captureForOrder(ordNo);
 
-        const shippedStatus = await withTransaction(async (client) => {
-            await Orders.markLinesShipped(ordNo, client);
+        const result = await withTransaction(async (client) => {
+            const shippedLines = await Orders.markLinesShipped(ordNo, client);
             const left = await client.query(
                 `SELECT 1 FROM order_lines
                  WHERE _ord_no = $1 AND fulfillment_status = 'backordered' LIMIT 1`, [ordNo]);
             const target = left.rows.length ? 'partially_shipped' : 'shipped';
             const ok = await Orders.setStatus(ordNo, target, SHIPPABLE_STATUSES, actorUserId, client);
-            return ok ? target : null;
+            if (!ok) return null;
+            const shipmentNo = await Shipments.create(client, {
+                ordNo, shippedBy: actorUserId, ...shipmentDetails, lines: shippedLines,
+            });
+            return { status: target, shipmentNo };
         });
-        if (!shippedStatus) {
+        if (!result) {
             // Raced by another ship request after our read. Capture is
             // idempotent, so the winner's flow owns the transition.
             throw Object.assign(new Error('Order is not in a shippable state'), { status: 409 });
@@ -73,11 +82,14 @@ const FulfillmentService = (function () {
         const Jobs = require('./jobs');   // lazy: jobs' handlers require services
         Jobs.send(Jobs.QUEUES.EMAIL, {
             event: 'order_shipped',
-            order: { ord_no: order.ord_no, total: order.total, currency: order.currency },
+            order: {
+                ord_no: order.ord_no, total: order.total, currency: order.currency,
+                shipment: shipmentDetails,
+            },
             to: order.email,
         }).catch(err => log('warn', 'order_shipped email enqueue failed', { ord_no: ordNo, error: err.message }));
 
-        return { ord_no: ordNo, status: shippedStatus };
+        return { ord_no: ordNo, status: result.status, shipment_no: result.shipmentNo };
     }
 
 }());

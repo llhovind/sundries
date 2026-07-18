@@ -43,18 +43,55 @@ async function toggleDetail(order) {
     }
 }
 
-async function ship(ordNo) {
-    busy.value = ordNo;
+// ── Ship: package details (all optional) confirmed in the expanded detail ────
+
+const shipForm = ref(null);   // { ord_no, carrier, tracking_no, notes }
+
+async function openShipForm(row) {
+    mutationError.value = '';
+    shipForm.value = { ord_no: row.ord_no, carrier: '', tracking_no: '', notes: '' };
+    if (!expanded.value[row.ord_no]) await toggleDetail(row);
+}
+
+async function confirmShip() {
+    const { ord_no, ...details } = shipForm.value;
+    busy.value = ord_no;
     mutationError.value = '';
     try {
-        await store.shipOrder(ordNo);
-        delete expanded.value[ordNo];
+        await store.shipOrder(ord_no, details);
+        shipForm.value = null;
+        expanded.value = { ...expanded.value, [ord_no]: await store.getOrder(ord_no) };
     } catch (err) {
         mutationError.value = apiErrorMessage(err, 'Ship failed');
     } finally {
         busy.value = null;
     }
 }
+
+// ── Edit tracking on an existing shipment ────────────────────────────────────
+
+const editShipment = ref(null);   // { ord_no, shipment_no, carrier, tracking_no, notes }
+
+function startEditShipment(ordNo, s) {
+    editShipment.value = {
+        ord_no: ordNo, shipment_no: s.shipment_no,
+        carrier: s.carrier || '', tracking_no: s.tracking_no || '', notes: s.notes || '',
+    };
+}
+
+async function saveShipment() {
+    const { ord_no, shipment_no, ...details } = editShipment.value;
+    mutationError.value = '';
+    try {
+        await store.updateShipment(ord_no, shipment_no, details);
+        editShipment.value = null;
+        expanded.value = { ...expanded.value, [ord_no]: await store.getOrder(ord_no) };
+    } catch (err) {
+        mutationError.value = apiErrorMessage(err, 'Shipment update failed');
+    }
+}
+
+const fmtTs = ts => new Date(ts).toLocaleString();
 </script>
 
 <template>
@@ -95,8 +132,8 @@ async function ship(ordNo) {
       <template #row-actions="{ row }">
         <button v-if="SHIPPABLE.includes(row.status) && auth.hasPerm('orders:fulfill')"
                 class="btn btn-primary ship" :disabled="busy === row.ord_no"
-                @click="ship(row.ord_no)">
-          {{ busy === row.ord_no ? 'Shipping…' : 'Ship + capture' }}
+                @click.stop="openShipForm(row)">
+          {{ busy === row.ord_no ? 'Shipping…' : 'Ship…' }}
         </button>
       </template>
 
@@ -120,6 +157,40 @@ async function ship(ordNo) {
             · Ship to {{ expanded[row.ord_no].ship_name }},
             {{ expanded[row.ord_no].ship_city }} {{ expanded[row.ord_no].ship_state }}
           </p>
+
+          <div v-if="shipForm && shipForm.ord_no === row.ord_no" class="ship-form">
+            <input v-model="shipForm.carrier"     class="input" type="text" placeholder="Carrier (optional)" />
+            <input v-model="shipForm.tracking_no" class="input" type="text" placeholder="Tracking # (optional)" />
+            <input v-model="shipForm.notes"       class="input" type="text" placeholder="Notes (optional)" />
+            <button class="btn btn-primary ship" :disabled="busy === row.ord_no" @click="confirmShip">
+              {{ busy === row.ord_no ? 'Shipping…' : 'Confirm ship + capture' }}
+            </button>
+            <button class="btn ship" @click="shipForm = null">Cancel</button>
+          </div>
+
+          <div v-if="expanded[row.ord_no].shipments?.length" class="shipments">
+            <p class="muted small shipments-title">Shipments</p>
+            <div v-for="s in expanded[row.ord_no].shipments" :key="s.shipment_no" class="shipment">
+              <template v-if="editShipment && editShipment.shipment_no === s.shipment_no">
+                <input v-model="editShipment.carrier"     class="input" type="text" placeholder="Carrier" />
+                <input v-model="editShipment.tracking_no" class="input" type="text" placeholder="Tracking #" />
+                <input v-model="editShipment.notes"       class="input" type="text" placeholder="Notes" />
+                <button class="btn btn-primary ship" @click="saveShipment">Save</button>
+                <button class="btn ship" @click="editShipment = null">Cancel</button>
+              </template>
+              <template v-else>
+                <span class="small">
+                  #{{ s.shipment_no }} · {{ fmtTs(s.shipped_at) }}
+                  · {{ s.carrier || 'no carrier' }}
+                  · {{ s.tracking_no ? `tracking ${s.tracking_no}` : 'no tracking' }}
+                  <span v-if="s.notes" class="muted"> · {{ s.notes }}</span>
+                </span>
+                <span class="muted small">{{ s.lines.map(l => `${l.sku} × ${l.qty}`).join(', ') }}</span>
+                <button v-if="auth.hasPerm('orders:fulfill')" class="btn ship"
+                        @click="startEditShipment(row.ord_no, s)">Edit</button>
+              </template>
+            </div>
+          </div>
         </div>
       </template>
 
@@ -137,6 +208,10 @@ async function ship(ordNo) {
 .error { color: #c0392b; margin-bottom: 0.5rem; font-size: 0.9rem; }
 .filter-row { display: flex; gap: 0.5rem; align-items: center; }
 .ship { padding: 0.15rem 0.6rem; font-size: 0.78rem; }
+.ship-form { display: flex; gap: 0.5rem; align-items: center; margin: 0.4rem 0; flex-wrap: wrap; }
+.shipments { margin-top: 0.4rem; }
+.shipments-title { margin: 0 0 0.2rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.shipment { display: flex; gap: 0.75rem; align-items: center; padding: 0.15rem 0; flex-wrap: wrap; }
 .lines { list-style: none; padding: 0.2rem 0; }
 .lines li { display: flex; gap: 1rem; align-items: center; padding: 0.2rem 0; }
 .lines li span:last-child { margin-left: auto; }

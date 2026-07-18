@@ -23,9 +23,15 @@ export const useOrdersStore = createListStore('orders', {
             return res.data.content.order;
         },
 
-        async shipOrder(ordNo) {
-            await api.post(`/api/v1/orders/${ordNo}/ship`);
+        /** @param {{carrier?:string, tracking_no?:string, notes?:string}} [details] */
+        async shipOrder(ordNo, details = {}) {
+            await api.post(`/api/v1/orders/${ordNo}/ship`, details);
             await getAll();
+        },
+
+        async updateShipment(ordNo, shipmentNo, details) {
+            const res = await api.put(`/api/v1/orders/${ordNo}/shipments/${shipmentNo}`, details);
+            return res.data.content.shipment;
         },
     }),
 });

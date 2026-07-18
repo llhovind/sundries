@@ -1,6 +1,7 @@
 'use strict';
 
 const { DB: db } = require('../common/db');
+const Shipments  = require('./shipments');
 
 /**
  * Repository for the orders aggregate (orders + order_lines) and the
@@ -144,9 +145,10 @@ const Orders = (function () {
                  FROM payments WHERE _ord_no = $1 ORDER BY payment_no`,
                 [ordNo]
             ).then(res => res.rows),
-        ]).then(([order, lines, payments]) => {
+            Shipments.findByOrder(ordNo),
+        ]).then(([order, lines, payments, shipments]) => {
             if (!order) return null;
-            return { ...order, lines, payments };
+            return { ...order, lines, payments, shipments };
         });
     }
 
@@ -199,13 +201,15 @@ const Orders = (function () {
         ).then(res => res.rows[0] || null);
     }
 
+    /** @returns {Promise<Array<{id:number, qty:number}>>} the lines that shipped */
     function markLinesShipped(ordNo, client) {
         const exec = client ? (q, p) => client.query(q, p) : (q, p) => db.query(q, p);
         return exec(
             `UPDATE order_lines SET fulfillment_status = 'shipped'
-             WHERE _ord_no = $1 AND fulfillment_status = 'reserved'`,
+             WHERE _ord_no = $1 AND fulfillment_status = 'reserved'
+             RETURNING id, qty`,
             [ordNo]
-        );
+        ).then(res => res.rows);
     }
 
     /** Links the cart to its order and closes it. */

@@ -88,7 +88,9 @@ function sendOrderEvent(event, order, recipient) {
         backorder_ready: `Order #${order.ord_no} backordered items arrived — ready to ship`,
     };
     const subject = subjects[event] || `Order #${order.ord_no}: ${event}`;
-    const text = `${subject}\n\nOrder: ${order.ord_no}\nTotal: ${order.total} ${order.currency || ''}`.trim();
+    let text = `${subject}\n\nOrder: ${order.ord_no}\nTotal: ${order.total} ${order.currency || ''}`.trim();
+    if (order.shipment?.carrier)     text += `\nCarrier: ${order.shipment.carrier}`;
+    if (order.shipment?.tracking_no) text += `\nTracking number: ${order.shipment.tracking_no}`;
     return send({ to: recipient, subject, text });
 }
 

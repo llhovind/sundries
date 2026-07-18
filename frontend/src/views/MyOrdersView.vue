@@ -126,6 +126,13 @@ onMounted(load);
                 · Tax $ {{ fixedNum(expanded[o.ord_no].tax, 2) }}
               </p>
 
+              <p v-for="s in expanded[o.ord_no].shipments" :key="s.shipment_no" class="small tracking">
+                📦 Shipped {{ new Date(s.shipped_at).toLocaleDateString() }}<template
+                  v-if="s.carrier"> via {{ s.carrier }}</template><template
+                  v-if="s.tracking_no"> — tracking <strong>{{ s.tracking_no }}</strong></template>
+                <span class="muted">({{ s.lines.map(l => `${l.descr || l.sku} × ${l.qty}`).join(', ') }})</span>
+              </p>
+
               <!-- Request a return: shipped lines only, within the return window -->
               <button v-if="RETURNABLE_ORDER.includes(o.status) && returnForm?.ord_no !== o.ord_no"
                       class="btn cancel" @click.stop="openReturn(expanded[o.ord_no])">
