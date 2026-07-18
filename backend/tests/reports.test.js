@@ -378,7 +378,7 @@ describe('given category-scoped permissions when reports are called then access 
             .set('Authorization', `Bearer ${token(['reports:inventory'])}`);
         expect(inv.body.content.categories.map(c => c.code)).toEqual(['inventory']);
         expect(inv.body.content.categories[0].reports.map(r => r.slug).sort())
-            .toEqual(['inventory-movements', 'reservations']);
+            .toEqual(['inventory-movements', 'low-stock', 'reservations']);
 
         // Catalog descriptors carry everything a generic UI needs.
         const movements = inv.body.content.categories[0].reports
@@ -475,5 +475,34 @@ describe('given stored reports when runs are generated then snapshots are kept, 
             .get(`/api/v1/reports/monthly-sales/runs/${runNo}`)
             .set('Authorization', `Bearer ${token(['reports:sales'])}`);
         expect(cross.status).toBe(404);
+    });
+});
+
+describe('given a variant near depletion when low-stock runs then inclusion follows the threshold', () => {
+
+    test('given available stock of 3 then threshold 5 lists it and threshold 2 does not', async () => {
+        const p = await db.query(
+            `INSERT INTO products (name, status, sell_method, base_uom)
+             VALUES ($1, 'active', 'unit', 'each') RETURNING product_no`,
+            [`LowStock Product ${RUN}`]);
+        await db.query(
+            `INSERT INTO product_variants (_product_no, sku, price, status)
+             VALUES ($1, $2, 9, 'active')`,
+            [p.rows[0].product_no, `LOW-${RUN}`]);
+        await db.query(
+            `INSERT INTO inventory_transactions (_trn_type, _variant_no, _warehouse_no, qty, unit_cost)
+             SELECT 'IN', variant_no, $2, 3, 1 FROM product_variants WHERE sku = $1`,
+            [`LOW-${RUN}`, wh]);
+
+        const low = registry.get('low-stock');
+        expect(registry.permissionFor(low)).toBe('reports:inventory');
+
+        const hit = (await low.run({ threshold: 5 })).find(r => r.sku === `LOW-${RUN}`);
+        expect(hit).toBeDefined();
+        expect(Number(hit.qty_available)).toBe(3);
+        expect(hit.product_name).toBe(`LowStock Product ${RUN}`);
+
+        const miss = (await low.run({ threshold: 2 })).find(r => r.sku === `LOW-${RUN}`);
+        expect(miss).toBeUndefined();
     });
 });
