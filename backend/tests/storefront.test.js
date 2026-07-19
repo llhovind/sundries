@@ -313,3 +313,130 @@ describe('given the inventory admin API when staff manage stock then permissions
         expect(denied.status).toBe(403);
     });
 });
+
+describe('given the product image API when staff upload images then primary_image and disk stay in sync', () => {
+    const fs   = require('fs/promises');
+    const path = require('path');
+    const UPLOADS_ROOT = path.join(__dirname, '../uploads');
+    const PNG = Buffer.from('89504e470d0a1a0a', 'hex');   // content is irrelevant — only the declared type is validated
+
+    let productNo;
+
+    beforeAll(async () => {
+        const created = await request(app).post('/api/v1/products')
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ name: `ImgProd ${RUN}`, status: 'draft' });
+        productNo = created.body.content.product_no;
+    });
+
+    afterAll(async () => {
+        await fs.rm(path.join(UPLOADS_ROOT, String(productNo)), { recursive: true, force: true });
+    });
+
+    test('given an image upload then primary_image is set and the file is served from disk', async () => {
+        const res = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'photo.png', contentType: 'image/png' });
+        expect(res.status).toBe(200);
+        const stored = res.body.content.primary_image;
+        expect(stored).toMatch(new RegExp(`^${productNo}/product-\\d+\\.png$`));
+        await expect(fs.access(path.join(UPLOADS_ROOT, stored))).resolves.toBeUndefined();
+
+        const detail = await request(app).get(`/api/v1/products/${productNo}`)
+            .set('Authorization', `Bearer ${staffToken()}`);
+        expect(detail.body.content.product.primary_image).toBe(stored);
+    });
+
+    test('given a replacement upload then the previous file is removed', async () => {
+        const first = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'a.png', contentType: 'image/png' });
+        const oldPath = first.body.content.primary_image;
+
+        await new Promise(resolve => setTimeout(resolve, 5));   // generated names are timestamped
+        const second = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'b.png', contentType: 'image/png' });
+        expect(second.status).toBe(200);
+        expect(second.body.content.primary_image).not.toBe(oldPath);
+
+        await expect(fs.access(path.join(UPLOADS_ROOT, oldPath))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(fs.access(path.join(UPLOADS_ROOT, second.body.content.primary_image))).resolves.toBeUndefined();
+    });
+
+    test('given a non-image type then the upload is rejected with 400', async () => {
+        const res = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', Buffer.from('plain text'), { filename: 'notes.txt', contentType: 'text/plain' });
+        expect(res.status).toBe(400);
+    });
+
+    test('given a missing file then the upload is rejected with 400', async () => {
+        const res = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`);
+        expect(res.status).toBe(400);
+    });
+
+    test('given an unknown product then the upload is a 404 and nothing is written', async () => {
+        const res = await request(app).post('/api/v1/products/999999999/image')
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'photo.png', contentType: 'image/png' });
+        expect(res.status).toBe(404);
+        await expect(fs.access(path.join(UPLOADS_ROOT, '999999999'))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    test('given a shopper without catalog:write then the upload is 403', async () => {
+        const shopper = await makeShopper('img');
+        const res = await request(app).post(`/api/v1/products/${productNo}/image`)
+            .set('Authorization', `Bearer ${token(shopper)}`)
+            .attach('image', PNG, { filename: 'photo.png', contentType: 'image/png' });
+        expect(res.status).toBe(403);
+    });
+
+    test('given a variant image upload and replacement then the variant primary_image and disk track it', async () => {
+        const vres = await request(app).post(`/api/v1/products/${productNo}/variants`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ sku: `IMG-V-${RUN}`, price: 5 });
+        const variantNo = vres.body.content.variant_no;
+
+        const first = await request(app)
+            .post(`/api/v1/products/${productNo}/variants/${variantNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'v.png', contentType: 'image/png' });
+        expect(first.status).toBe(200);
+        const oldPath = first.body.content.primary_image;
+        expect(oldPath).toMatch(new RegExp(`^${productNo}/variant-${variantNo}-\\d+\\.png$`));
+
+        const detail = await request(app).get(`/api/v1/products/${productNo}`)
+            .set('Authorization', `Bearer ${staffToken()}`);
+        const variant = detail.body.content.product.variants.find(v => v.variant_no === variantNo);
+        expect(variant.primary_image).toBe(oldPath);
+
+        await new Promise(resolve => setTimeout(resolve, 5));   // generated names are timestamped
+        const second = await request(app)
+            .post(`/api/v1/products/${productNo}/variants/${variantNo}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'v2.png', contentType: 'image/png' });
+        expect(second.status).toBe(200);
+        expect(second.body.content.primary_image).not.toBe(oldPath);
+        await expect(fs.access(path.join(UPLOADS_ROOT, oldPath))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(fs.access(path.join(UPLOADS_ROOT, second.body.content.primary_image))).resolves.toBeUndefined();
+    });
+
+    test('given a variant that does not belong to the product then the upload is a 404', async () => {
+        const other = await request(app).post('/api/v1/products')
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ name: `ImgOther ${RUN}`, status: 'draft' });
+        const otherNo = other.body.content.product_no;
+        const vres = await request(app).post(`/api/v1/products/${otherNo}/variants`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .send({ sku: `IMG-O-${RUN}`, price: 5 });
+        const foreignVariant = vres.body.content.variant_no;
+
+        const res = await request(app)
+            .post(`/api/v1/products/${productNo}/variants/${foreignVariant}/image`)
+            .set('Authorization', `Bearer ${staffToken()}`)
+            .attach('image', PNG, { filename: 'v.png', contentType: 'image/png' });
+        expect(res.status).toBe(404);
+    });
+});

@@ -29,6 +29,8 @@ const ROUTE_PERMS = Object.freeze({
     'PUT /api/v1/products/:product_no':            ['catalog:write'],
     'POST /api/v1/products/:product_no/variants':  ['catalog:write'],
     'PUT /api/v1/products/:product_no/options':    ['catalog:write'],
+    'POST /api/v1/products/:product_no/image':     ['catalog:write'],
+    'POST /api/v1/products/:product_no/variants/:variant_no/image': ['catalog:write'],
     'POST /api/v1/categories':                     ['catalog:write'],
     'PUT /api/v1/categories/:id':                  ['catalog:write'],
     'DELETE /api/v1/categories/:id':               ['catalog:write'],

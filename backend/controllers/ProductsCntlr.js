@@ -1,12 +1,14 @@
 'use strict';
 
-const Products   = require('../models/products');
-const Rbac       = require('../models/rbac');
-const Pagination = require('../common/pagination');
+const Products     = require('../models/products');
+const Rbac         = require('../models/rbac');
+const Pagination   = require('../common/pagination');
+const ImageStorage = require('../services/imageStorage');
+const { log }      = require('../common/logger');
 
 const ProductsCntlr = function () {
 
-    return { list, findOne, create, update, upsertVariant, setOptions };
+    return { list, findOne, create, update, upsertVariant, setOptions, uploadImage, uploadVariantImage };
 
     /** Staff (catalog:write) see inactive/draft products; shoppers and anonymous guests do not. */
     async function canSeeInactive(req) {
@@ -77,6 +79,77 @@ const ProductsCntlr = function () {
                 next();
             })
             .catch(err => next({ status: err.status || 500, message: err.message }));
+    }
+
+    /**
+     * Shared image-swap sequence: write the new file, point the DB at it
+     * (rolling the file back if that fails), then drop the replaced file —
+     * so disk and DB cannot drift apart.
+     */
+    async function swapImage({ save, persist, previous, logContext }) {
+        const stored = await save();
+        try {
+            await persist(stored);
+        } catch (err) {
+            await ImageStorage.removeImage(stored).catch(() => {});
+            throw err;
+        }
+        if (previous && previous !== stored) {
+            await ImageStorage.removeImage(previous).catch(err =>
+                log('warn', 'failed to remove replaced image', { ...logContext, image: previous, error: err }));
+        }
+        return stored;
+    }
+
+    /** Stores an uploaded image (req.file, from the imageUpload middleware) as the product's primary_image. */
+    async function uploadImage(req, res, next) {
+        const productNo = parseInt(req.params.product_no, 10);
+        if (isNaN(productNo)) return next({ status: 400, message: 'Invalid product_no' });
+        if (!req.file) return next({ status: 400, message: 'An "image" file field is required' });
+        try {
+            const product = await Products.findOne(productNo, { includeInactive: true });
+            if (!product) return next({ status: 404, message: 'Product not found' });
+
+            const stored = await swapImage({
+                save:       () => ImageStorage.saveProductImage(productNo, req.file.mimetype, req.file.buffer),
+                persist:    s  => Products.update(productNo, { primary_image: s }, req.user.id),
+                previous:   product.primary_image,
+                logContext: { productNo },
+            });
+            res.locals.results = { product_no: productNo, primary_image: stored };
+            res.locals.status  = 200;
+            res.locals.message = 'Product image saved';
+            next();
+        } catch (err) {
+            next({ status: err.status || 500, message: err.message || 'Failed to save product image' });
+        }
+    }
+
+    /** Same as uploadImage, scoped to one variant's primary_image. */
+    async function uploadVariantImage(req, res, next) {
+        const productNo = parseInt(req.params.product_no, 10);
+        const variantNo = parseInt(req.params.variant_no, 10);
+        if (isNaN(productNo) || isNaN(variantNo)) {
+            return next({ status: 400, message: 'Invalid product_no or variant_no' });
+        }
+        if (!req.file) return next({ status: 400, message: 'An "image" file field is required' });
+        try {
+            const variant = await Products.findVariant(productNo, variantNo);
+            if (!variant) return next({ status: 404, message: 'Variant not found' });
+
+            const stored = await swapImage({
+                save:       () => ImageStorage.saveVariantImage(productNo, variantNo, req.file.mimetype, req.file.buffer),
+                persist:    s  => Products.setVariantImage(productNo, variantNo, s, req.user.id),
+                previous:   variant.primary_image,
+                logContext: { productNo, variantNo },
+            });
+            res.locals.results = { product_no: productNo, variant_no: variantNo, primary_image: stored };
+            res.locals.status  = 200;
+            res.locals.message = 'Variant image saved';
+            next();
+        } catch (err) {
+            next({ status: err.status || 500, message: err.message || 'Failed to save variant image' });
+        }
     }
 
     /** Shape check only — combination rules (one value per option, uniqueness) live in the model. */

@@ -36,6 +36,10 @@ const currentVariant = computed(() => {
 
 const available = computed(() => Number(currentVariant.value?.qty_available) || 0);
 
+/** Hero image: the selected variant's own image wins over the product-level one. */
+const displayImage = computed(() =>
+    currentVariant.value?.primary_image || product.value?.primary_image || null);
+
 async function load() {
     try {
         const res = await api.get('/api/v1/products/' + route.params.product_no);
@@ -81,7 +85,7 @@ onMounted(load);
 
     <div class="layout">
       <div class="thumb card">
-        <img v-if="product.primary_image" :src="'/images/' + product.primary_image" :alt="product.name" />
+        <img v-if="displayImage" :src="'/images/' + displayImage" :alt="product.name" />
         <span v-else class="thumb-fallback">{{ product.name.slice(0, 1) }}</span>
       </div>
 

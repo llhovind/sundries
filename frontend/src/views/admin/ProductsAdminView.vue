@@ -157,6 +157,41 @@ async function saveVariantPrice(productNo, variant, price) {
     }
 }
 
+/** Accepted upload types — mirrors the backend allow-list (services/imageStorage.js). */
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
+
+/** Pulls the chosen file off a file-input change event, resetting the input so the same file re-fires @change. */
+function pickedFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    return file;
+}
+
+async function uploadImage(productNo, event) {
+    mutationError.value = '';
+    const file = pickedFile(event);
+    if (!file) return;
+    try {
+        await store.uploadImage(productNo, file);
+        await refreshDetail(productNo);
+    } catch (err) {
+        mutationError.value = apiErrorMessage(err, 'Image upload failed');
+    }
+}
+
+async function uploadVariantImage(productNo, variant, event) {
+    mutationError.value = '';
+    const file = pickedFile(event);
+    if (!file) return;
+    try {
+        await store.uploadVariantImage(productNo, variant.variant_no, file);
+        flashSaved(variant.variant_no);
+        await refreshDetail(productNo);
+    } catch (err) {
+        mutationError.value = apiErrorMessage(err, 'Variant image upload failed');
+    }
+}
+
 /** Adds a new option, or merges values into an existing option of the same name. */
 async function addOption(productNo) {
     mutationError.value = '';
@@ -234,6 +269,16 @@ async function addOption(productNo) {
       </template>
 
       <template #detail="{ row }">
+        <div class="image-row">
+          <img v-if="detail[row.product_no].primary_image" class="thumb"
+               :src="'/images/' + detail[row.product_no].primary_image" :alt="row.name" />
+          <span v-else class="muted">No image</span>
+          <label class="btn mini">
+            {{ detail[row.product_no].primary_image ? 'Replace image' : 'Upload image' }}
+            <input class="file-input" type="file" :accept="IMAGE_ACCEPT"
+                   @change="uploadImage(row.product_no, $event)" />
+          </label>
+        </div>
         <div class="options">
           <strong>Options:</strong>
           <span v-for="o in detail[row.product_no].options" :key="o.option_no" class="pill accent">
@@ -248,10 +293,18 @@ async function addOption(productNo) {
           </template>
         </div>
         <table class="table-plain inner">
-          <thead><tr><th>SKU</th><th>Options</th><th>Price</th><th>Status</th><th>Available</th><th class="save-col"></th></tr></thead>
+          <thead><tr><th>SKU</th><th>Image</th><th>Options</th><th>Price</th><th>Status</th><th>Available</th><th class="save-col"></th></tr></thead>
           <tbody>
             <tr v-for="v in detail[row.product_no].variants" :key="v.variant_no">
               <td>{{ v.sku }}</td>
+              <td class="img-cell">
+                <img v-if="v.primary_image" class="thumb sm" :src="'/images/' + v.primary_image" :alt="v.sku" />
+                <label class="btn mini" :title="v.primary_image ? 'Replace image' : 'Upload image'">
+                  {{ v.primary_image ? '↺' : '+ img' }}
+                  <input class="file-input" type="file" :accept="IMAGE_ACCEPT"
+                         @change="uploadVariantImage(row.product_no, v, $event)" />
+                </label>
+              </td>
               <td class="muted">
                 <template v-if="detail[row.product_no].options.length">
                   <select v-for="o in detail[row.product_no].options" :key="o.option_no"
@@ -315,6 +368,11 @@ async function addOption(productNo) {
 .mini { padding: 0.1rem 0.5rem; font-size: 0.75rem; }
 .mini-in { width: 130px; }
 .options { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.image-row { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.5rem; }
+.thumb { max-height: 64px; max-width: 96px; object-fit: cover; border-radius: 4px; }
+.thumb.sm { max-height: 28px; max-width: 42px; }
+.img-cell { display: flex; gap: 0.4rem; align-items: center; }
+.file-input { display: none; }
 .inner { font-size: 0.85rem; margin: 0.4rem 0; }
 .price-in { width: 90px; }
 .opt-sel { width: auto; min-width: 90px; margin-right: 0.3rem; font-size: 0.85rem; padding: 0.15rem 0.3rem; }

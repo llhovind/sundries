@@ -36,6 +36,20 @@ export const useProductsStore = createListStore('products', {
             await api.post(`/api/v1/products/${productNo}/variants`, payload);
         },
 
+        /** Uploads a product image (multipart) and makes it the primary image. */
+        async uploadImage(productNo, file) {
+            const form = new FormData();
+            form.append('image', file);
+            await api.post(`/api/v1/products/${productNo}/image`, form);
+        },
+
+        /** Uploads an image for one variant of a product. */
+        async uploadVariantImage(productNo, variantNo, file) {
+            const form = new FormData();
+            form.append('image', file);
+            await api.post(`/api/v1/products/${productNo}/variants/${variantNo}/image`, form);
+        },
+
         async saveOptions(productNo, options) {
             await api.put(`/api/v1/products/${productNo}/options`, { options });
         },

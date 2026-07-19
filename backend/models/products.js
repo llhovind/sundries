@@ -12,7 +12,7 @@ const Products = (function () {
     const WRITABLE = ['name', 'descr', 'brand', 'status', 'sell_method', 'base_uom',
                       'min_cut_qty', 'weight_lbs', 'attributes', 'primary_image', 'notes'];
 
-    return { list, findOne, create, update, upsertVariant, setOptions };
+    return { list, findOne, create, update, upsertVariant, setOptions, findVariant, setVariantImage };
 
     /**
      * Paginated catalog list. Storefront callers get active products only;
@@ -141,6 +141,29 @@ const Products = (function () {
              RETURNING product_no`,
             vals
         ).then(res => res.rows[0] ? res.rows[0].product_no : null);
+    }
+
+    /** Minimal variant lookup, scoped to its product so ids can't be mixed across products. */
+    function findVariant(productNo, variantNo) {
+        return db.query(
+            `SELECT variant_no, primary_image FROM product_variants
+             WHERE variant_no = $1 AND _product_no = $2`,
+            [variantNo, productNo]
+        ).then(res => res.rows[0] || null);
+    }
+
+    /** product_variants is audit-triggered, so this write goes through withAudit. */
+    function setVariantImage(productNo, variantNo, primaryImage, userId) {
+        return withAudit(userId, async (client) => {
+            const res = await client.query(
+                `UPDATE product_variants
+                 SET primary_image = $3, _modify_ts = NOW(), _modify_user_id = $4
+                 WHERE variant_no = $1 AND _product_no = $2
+                 RETURNING variant_no`,
+                [variantNo, productNo, primaryImage, userId]);
+            if (!res.rows.length) throw Object.assign(new Error('Variant not found'), { status: 404 });
+            return variantNo;
+        });
     }
 
     /**

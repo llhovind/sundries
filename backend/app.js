@@ -3,7 +3,6 @@ var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var morgan = require('morgan');
-const multer = require('multer');
 const Logger = require('./common/logger');
 const responseHandler = require('./common/responseHandlers');
 const auth = require('./middleware/auth');
@@ -72,13 +71,5 @@ require('./config/validateRouteGuards').validateRouteGuards(app);
 
 app.use(responseHandler.handleResponse);
 app.use(responseHandler.handleErrorResponse);
-
-// Multer errors that escape controller-level handling (e.g. middleware chain edge cases)
-app.use((err, _req, res, next) => {
-    if (err instanceof multer.MulterError || err.status === 400) {
-        return res.status(400).json({ outcome: { statusCode: 400, message: err.message } });
-    }
-    next(err);
-});
 
 module.exports = app;
