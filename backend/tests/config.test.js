@@ -99,6 +99,43 @@ describe('common/config startup validation', () => {
         })).not.toThrow();
     });
 
+    test('given no IMAGE_PROVIDER then images default to the local store', () => {
+        const config = loadConfig({ ...BASE_ENV, ...SMTP_ENV });
+        expect(config.images).toMatchObject({ provider: 'local', prefix: 'images' });
+    });
+
+    test('given an unknown IMAGE_PROVIDER then startup fails naming the valid set', () => {
+        expect(() => loadConfig({ ...BASE_ENV, ...SMTP_ENV, IMAGE_PROVIDER: 'gcs' }))
+            .toThrow(/IMAGE_PROVIDER must be one of \[local, s3\], got 'gcs'/);
+    });
+
+    test('given IMAGE_PROVIDER=s3 without a bucket or public base then startup fails naming both', () => {
+        expect(() => loadConfig({ ...BASE_ENV, ...SMTP_ENV, IMAGE_PROVIDER: 's3' }))
+            .toThrow(/S3_BUCKET.*IMAGE_PUBLIC_BASE_URL/s);
+    });
+
+    test('given IMAGE_PROVIDER=s3 fully configured then config loads with the key prefix', () => {
+        const config = loadConfig({
+            ...BASE_ENV, ...SMTP_ENV,
+            IMAGE_PROVIDER:        's3',
+            S3_BUCKET:             'store-images',
+            S3_PREFIX:             '/catalog/',
+            IMAGE_PUBLIC_BASE_URL: 'https://cdn.example.com/catalog/',
+        });
+        expect(config.images).toEqual({
+            provider:      's3',
+            bucket:        'store-images',
+            prefix:        'catalog',
+            publicBaseUrl: 'https://cdn.example.com/catalog',
+        });
+    });
+
+    test('given a malformed IMAGE_PUBLIC_BASE_URL then startup fails', () => {
+        expect(() => loadConfig({
+            ...BASE_ENV, ...SMTP_ENV, IMAGE_PUBLIC_BASE_URL: 'cdn.example.com',
+        })).toThrow(/IMAGE_PUBLIC_BASE_URL must be an http\(s\) URL, got 'cdn.example.com'/);
+    });
+
     test('given NODE_ENV=production without COOKIE_SECURE then startup fails', () => {
         expect(() => loadConfig({ ...BASE_ENV, ...SMTP_ENV, NODE_ENV: 'production' }))
             .toThrow(/COOKIE_SECURE must be 'true' when NODE_ENV is 'production'/);

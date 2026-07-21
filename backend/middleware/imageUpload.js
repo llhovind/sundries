@@ -1,12 +1,13 @@
 'use strict';
 
 const multer = require('multer');
-const { ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES } = require('../services/imageStorage');
+const { ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES } = require('../services/images/policy');
 
 /**
  * Single-image upload middleware. The file is buffered in memory (bounded by
  * MAX_IMAGE_BYTES) and handed to the controller as req.file — persisting it
- * is the image-storage adapter's job, not the transport's.
+ * is the image-storage service's job, not the transport's. Limits come from
+ * the shared upload policy, so this stays the same whichever store is active.
  */
 const upload = multer({
     storage: multer.memoryStorage(),

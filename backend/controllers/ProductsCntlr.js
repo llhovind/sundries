@@ -3,7 +3,7 @@
 const Products     = require('../models/products');
 const Rbac         = require('../models/rbac');
 const Pagination   = require('../common/pagination');
-const ImageStorage = require('../services/imageStorage');
+const ImageStorage = require('../services/images');
 const { log }      = require('../common/logger');
 
 const ProductsCntlr = function () {

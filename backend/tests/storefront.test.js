@@ -317,7 +317,7 @@ describe('given the inventory admin API when staff manage stock then permissions
 describe('given the product image API when staff upload images then primary_image and disk stay in sync', () => {
     const fs   = require('fs/promises');
     const path = require('path');
-    const UPLOADS_ROOT = path.join(__dirname, '../uploads');
+    const UPLOADS_ROOT = require('../services/images/localAdapter').root;
     const PNG = Buffer.from('89504e470d0a1a0a', 'hex');   // content is irrelevant — only the declared type is validated
 
     let productNo;

@@ -1,15 +1,20 @@
 const config = require('./common/config');   // validates required env vars — throws at startup if any are missing
 var express = require('express');
 var helmet = require('helmet');
-var path = require('path');
 var cookieParser = require('cookie-parser');
 var morgan = require('morgan');
 const Logger = require('./common/logger');
 const responseHandler = require('./common/responseHandlers');
 const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
+const { mountImageDelivery } = require('./middleware/imageDelivery');
 
 var app = express();
+
+// Public URL prefix for catalog images. The frontend builds every image src as
+// `${IMAGE_PATH}/${primary_image}`, so this is the one place it is defined and
+// the seam a CDN can take over (see mountImageDelivery below).
+const IMAGE_PATH = '/images';
 
 // Behind a reverse proxy in every documented deployment tier (see README):
 // derive req.ip / req.protocol from X-Forwarded-* per TRUST_PROXY, so the ip
@@ -49,8 +54,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// Static image serving — uploads/:item_no/:filename exposed at /images/:item_no/:filename
-app.use('/images', express.static(path.join(__dirname, 'uploads')));
+// Public image delivery at /images/<product_no>/<filename>. WHERE those bytes
+// come from is the image store's business (services/images), not this file's —
+// it hands back a delivery descriptor and the app layer mounts it.
+mountImageDelivery(app, IMAGE_PATH, require('./services/images').publicDelivery());
 
 // Public routes
 app.use('/', require('./routes/index'));

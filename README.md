@@ -209,6 +209,13 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
    15 2 * * * /opt/online-store/backend/db/backup.sh >> /var/log/store-backup.log 2>&1
    ```
 
+> **Catalog images are on local disk here** (`IMAGE_PROVIDER` unset →
+> `backend/uploads/`, served by the API at `/images`). Two consequences for this
+> tier: the directory must live on persistent storage (not a container layer), and
+> **`db/backup.sh` does not cover it** — back `uploads/` up alongside the database
+> (e.g. `rsync`/`tar` in the same nightly cron), or DB rows will outlive the files
+> they point at. More than one API instance requires the S3 store instead (§3).
+
 **Defense-in-depth grants** (recommended): the ledgers are already trigger-protected,
 but you can additionally revoke destructive rights from the app user:
 
@@ -238,9 +245,51 @@ availability with Multi-AZ.
 | Background jobs | Set `JOBS_INLINE=false` on the API fleet; run `npm run worker` on 1–2 dedicated instances (pg-boss coordinates via Postgres — sweeper, backorders, search indexing, emails, fraud screening, scheduled reports, partition/token maintenance) |
 | Search | OpenSearch on its own server/managed domain (`SEARCH_PROVIDER=opensearch`, `npm i @opensearch-project/opensearch`); catalog changes flow through the `search_outbox` table so index updates survive OpenSearch downtime |
 | Email | SES adapter (`MAIL_PROVIDER=ses`, `npm i @aws-sdk/client-sesv2`); keep SMTP for small installs |
-| Images | Object storage (S3) + CDN instead of the local `uploads/` directory — required as soon as there are 2 API instances |
+| Images | `IMAGE_PROVIDER=s3` + CDN instead of the local `uploads/` directory — **required as soon as there are 2 API instances** (see below) |
 | Backups | RDS automated backups + snapshots for PITR, **plus** periodic `db/backup.sh` archives to S3 as a provider-independent escape hatch |
 | Secrets | Inject env vars from your secret manager; never bake them into images |
+
+### Catalog images on S3
+
+`primary_image` stores an opaque key (`<product_no>/<filename>`), never a URL, and
+every storage adapter derives the *same* key — so switching stores is configuration
+plus a file copy, never a data migration.
+
+1. **Bucket**: Block Public Access **on**, versioning **on** (this is also the images'
+   backup), a lifecycle rule expiring noncurrent versions after ~30 days.
+2. **CDN**: CloudFront with the bucket as an origin via Origin Access Control, and a
+   `/images/*` behaviour pointing at it — `S3_PREFIX` defaults to `images` so public
+   path and bucket key line up with no rewrite rule. The API is then never in the
+   image *read* path.
+3. **IAM** for the API's task/instance role — write-only, since the CDN does the reading:
+
+   ```json
+   { "Effect": "Allow",
+     "Action": ["s3:PutObject", "s3:DeleteObject"],
+     "Resource": "arn:aws:s3:::my-store-images/images/*" }
+   ```
+
+4. **Install and configure**: `npm install @aws-sdk/client-s3`, then
+
+   ```bash
+   IMAGE_PROVIDER=s3
+   S3_BUCKET=my-store-images
+   S3_PREFIX=images                                  # optional, this is the default
+   IMAGE_PUBLIC_BASE_URL=https://cdn.example.com/images
+   ```
+
+   `IMAGE_PUBLIC_BASE_URL` is required with `s3` (startup fails without it) and is
+   what a key is joined onto to form a public URL. If your CDN routes `/images/*`
+   itself the API never uses it; if it doesn't, the API answers `/images/<key>` with
+   a cacheable 302 there, so images work either way rather than 404ing silently.
+
+5. **Migrate existing files, then cut over** — the copy is idempotent and touches no
+   database rows, so `uploads/` stays intact as a rollback path:
+
+   ```bash
+   node bin/migrateImagesToS3.js --dry-run   # counts and validates, uploads nothing
+   node bin/migrateImagesToS3.js             # then flip IMAGE_PROVIDER and restart
+   ```
 
 **Sizing intuition**: 500k orders/day ≈ 6/sec sustained. With balances/costing as single
 indexed row updates (no ledger scans on the read path), a mid-size RDS instance handles
@@ -262,6 +311,10 @@ Simple, provider-independent, restore-tested:
   run the sanity queries — an unrestored backup is a hope, not a plan.
 * On RDS, treat native automated backups as primary (point-in-time recovery) and these
   archives as the portable fallback.
+* **Images are not in the database dump.** On the local store, add `backend/uploads/`
+  to your file backup; on the S3 store, bucket versioning plus the noncurrent-version
+  lifecycle rule is the equivalent. A restored database whose images are gone still
+  renders a broken catalog.
 
 ---
 
@@ -283,6 +336,8 @@ problem reported at once):
 | `PAYMENT_PROVIDER` | `fake` (default — refused in production without `ALLOW_FAKE_PAYMENTS=true`) / `stripe` (requires `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) |
 | `SEARCH_PROVIDER` | `postgres` (default) / `opensearch` (with `OPENSEARCH_URL`, `OPENSEARCH_INDEX`) |
 | `JOBS_INLINE` | `false` moves background jobs off the API onto `npm run worker` instances |
+| `IMAGE_PROVIDER` | `local` (default — `backend/uploads/`, single instance only) / `s3` (requires `S3_BUCKET` + `IMAGE_PUBLIC_BASE_URL`, and `npm i @aws-sdk/client-s3`) |
+| `S3_PREFIX`, `IMAGE_PUBLIC_BASE_URL` | Bucket sub-path for images (default `images`) and the public base a stored key is joined onto to form its URL |
 | `ADMIN_EMAIL`, `ADMIN_USERNAME` | Initial admin created by `db/bootstrap.js` (OTP login, no password) |
 | `BACKUP_DIR`, `BACKUP_RETENTION_DAYS` | Used by `db/backup.sh` |
 | `COOKIE_SECURE`, `NODE_ENV`, `PORT` | Runtime behavior |

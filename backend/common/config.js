@@ -11,6 +11,10 @@ require('dotenv').config();
 // the adapter registries (services/mail/index.js, services/payments/index.js).
 const MAIL_PROVIDERS    = ['smtp', 'ses', 'noop'];
 const PAYMENT_PROVIDERS = ['fake', 'stripe'];
+const IMAGE_PROVIDERS   = ['local', 's3'];
+
+/** Bucket sub-path images are stored under; must match the CDN's /images route. */
+const DEFAULT_IMAGE_PREFIX = 'images';
 
 const BASE_REQUIRED_VARS = [
     'DB_HOST',
@@ -36,6 +40,14 @@ function requiredVars(env) {
 
     if (env.PAYMENT_PROVIDER === 'stripe') {
         required.push('STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET');
+    }
+
+    // S3 images need a bucket to write to, and a public base URL to send
+    // readers to. The base URL is required rather than optional so a deploy
+    // whose CDN does not route /images itself still serves images (via the
+    // API's redirect) instead of 404ing silently — see app.js.
+    if (env.IMAGE_PROVIDER === 's3') {
+        required.push('S3_BUCKET', 'IMAGE_PUBLIC_BASE_URL');
     }
 
     return required;
@@ -68,6 +80,15 @@ function parseTrustProxy(raw) {
     return value;
 }
 
+/** @param {string} value @returns {boolean} */
+function isHttpUrl(value) {
+    try {
+        return ['http:', 'https:'].includes(new URL(value).protocol);
+    } catch {
+        return false;
+    }
+}
+
 function validate(env) {
     const problems = [];
 
@@ -81,6 +102,14 @@ function validate(env) {
     }
     if (env.PAYMENT_PROVIDER && !PAYMENT_PROVIDERS.includes(env.PAYMENT_PROVIDER)) {
         problems.push(`PAYMENT_PROVIDER must be one of [${PAYMENT_PROVIDERS.join(', ')}], got '${env.PAYMENT_PROVIDER}'`);
+    }
+    if (env.IMAGE_PROVIDER && !IMAGE_PROVIDERS.includes(env.IMAGE_PROVIDER)) {
+        problems.push(`IMAGE_PROVIDER must be one of [${IMAGE_PROVIDERS.join(', ')}], got '${env.IMAGE_PROVIDER}'`);
+    }
+    // Caught here rather than as a broken <img> on the storefront: every image
+    // URL the app hands out is built by joining this to a storage key.
+    if (env.IMAGE_PUBLIC_BASE_URL && !isHttpUrl(env.IMAGE_PUBLIC_BASE_URL)) {
+        problems.push(`IMAGE_PUBLIC_BASE_URL must be an http(s) URL, got '${env.IMAGE_PUBLIC_BASE_URL}'`);
     }
 
     // A negative hop count is a typo, not a valid Express spec — catch it here
@@ -125,6 +154,13 @@ module.exports = {
     },
     cookie: {
         secure: process.env.COOKIE_SECURE === 'true',
+    },
+    images: {
+        provider:      process.env.IMAGE_PROVIDER || 'local',
+        bucket:        process.env.S3_BUCKET,
+        prefix:        (process.env.S3_PREFIX || DEFAULT_IMAGE_PREFIX).replace(/^\/+|\/+$/g, ''),
+        // Trailing slash stripped so callers always join with exactly one.
+        publicBaseUrl: (process.env.IMAGE_PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
     },
     port: parseInt(process.env.PORT, 10) || 3000,
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
