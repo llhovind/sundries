@@ -54,6 +54,7 @@ function format(level, msg, extra = {}) {
     const entry = { level, msg, ts: new Date().toISOString() };
     const ctx = requestContext.get();
     if (ctx?.correlationId) entry.correlationId = ctx.correlationId;
+    if (ctx?.ip) entry.ip = ctx.ip;
     for (const [key, value] of Object.entries(extra)) {
         entry[key] = serializeValue(value);
     }

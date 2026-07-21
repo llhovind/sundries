@@ -1,4 +1,4 @@
-require('./common/config');   // validates required env vars — throws at startup if any are missing
+const config = require('./common/config');   // validates required env vars — throws at startup if any are missing
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
@@ -9,6 +9,12 @@ const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
 
 var app = express();
+
+// Behind a reverse proxy in every documented deployment tier (see README):
+// derive req.ip / req.protocol from X-Forwarded-* per TRUST_PROXY, so the ip
+// on every log line and audit row is the real client, not the proxy. Must be
+// set before any middleware reads req.ip.
+app.set('trust proxy', config.trustProxy);
 
 // Per-request context (correlation id + client ip) — must be first so every
 // log line and DB audit row downstream can attribute itself to the request.

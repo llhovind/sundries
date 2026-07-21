@@ -41,6 +41,33 @@ function requiredVars(env) {
     return required;
 }
 
+/**
+ * Express `trust proxy` setting, resolved from TRUST_PROXY.
+ *
+ * Every deployment tier in README.md sits behind a reverse proxy (nginx/ALB),
+ * so req.ip / req.protocol must be derived from X-Forwarded-* to attribute the
+ * real client rather than the proxy. Accepted forms:
+ *   unset / ''        -> false  (trust nobody; correct for a direct-to-internet
+ *                                 single instance, and the safe default)
+ *   'true' / 'false'  -> boolean
+ *   a non-negative int-> hop count: trust exactly N proxies in front (preferred
+ *                                    for a known topology — prevents a client
+ *                                    from spoofing X-Forwarded-For past them)
+ *   anything else     -> passed through to Express as a trusted IP/CIDR list or
+ *                        a named preset ('loopback', 'uniquelocal', ...).
+ *
+ * @param {string|undefined} raw
+ * @returns {boolean|number|string}
+ */
+function parseTrustProxy(raw) {
+    if (raw === undefined) return false;
+    const value = raw.trim();
+    if (value === '' || value === 'false') return false;
+    if (value === 'true') return true;
+    if (/^\d+$/.test(value)) return parseInt(value, 10);
+    return value;
+}
+
 function validate(env) {
     const problems = [];
 
@@ -54,6 +81,12 @@ function validate(env) {
     }
     if (env.PAYMENT_PROVIDER && !PAYMENT_PROVIDERS.includes(env.PAYMENT_PROVIDER)) {
         problems.push(`PAYMENT_PROVIDER must be one of [${PAYMENT_PROVIDERS.join(', ')}], got '${env.PAYMENT_PROVIDER}'`);
+    }
+
+    // A negative hop count is a typo, not a valid Express spec — catch it here
+    // rather than letting Express misread '-1' as a trusted-IP list per request.
+    if (env.TRUST_PROXY !== undefined && /^-\d+$/.test(env.TRUST_PROXY.trim())) {
+        problems.push(`TRUST_PROXY hop count must be non-negative, got '${env.TRUST_PROXY}'`);
     }
 
     // The refresh-token cookie must never travel over plain HTTP in
@@ -94,5 +127,6 @@ module.exports = {
         secure: process.env.COOKIE_SECURE === 'true',
     },
     port: parseInt(process.env.PORT, 10) || 3000,
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     isDev: process.env.NODE_ENV !== 'production',
 };

@@ -117,4 +117,30 @@ describe('common/config startup validation', () => {
         expect(() => loadConfig({ ...BASE_ENV, MAIL_PROVIDER: 'bogus', PAYMENT_PROVIDER: 'bogus' }))
             .toThrow(/MAIL_PROVIDER.*PAYMENT_PROVIDER/s);
     });
+
+    test('given TRUST_PROXY unset then trustProxy is false (trust nobody)', () => {
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV }).trustProxy).toBe(false);
+    });
+
+    test('given TRUST_PROXY=true/false then trustProxy is the boolean', () => {
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    });
+
+    test('given a numeric TRUST_PROXY then trustProxy is that hop count as a number', () => {
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: '2' }).trustProxy).toBe(2);
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: '0' }).trustProxy).toBe(0);
+    });
+
+    test('given a non-numeric TRUST_PROXY then it passes through as a string spec', () => {
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: 'loopback' }).trustProxy)
+            .toBe('loopback');
+        expect(loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: '10.0.0.0/8' }).trustProxy)
+            .toBe('10.0.0.0/8');
+    });
+
+    test('given a negative TRUST_PROXY hop count then startup fails', () => {
+        expect(() => loadConfig({ ...BASE_ENV, ...SMTP_ENV, TRUST_PROXY: '-1' }))
+            .toThrow(/TRUST_PROXY hop count must be non-negative, got '-1'/);
+    });
 });

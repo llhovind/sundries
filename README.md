@@ -279,6 +279,7 @@ problem reported at once):
 | `ADMIN_EMAIL`, `ADMIN_USERNAME` | Initial admin created by `db/bootstrap.js` (OTP login, no password) |
 | `BACKUP_DIR`, `BACKUP_RETENTION_DAYS` | Used by `db/backup.sh` |
 | `COOKIE_SECURE`, `NODE_ENV`, `PORT` | Runtime behavior |
+| `TRUST_PROXY` | Express `trust proxy` for the reverse-proxy tiers below — sets how `req.ip` (logs + audit rows) and `req.protocol` read `X-Forwarded-*`. Unset = trust nobody (direct-to-internet single instance). Set to the **number of proxies in front** (e.g. `1` for one nginx/ALB — preferred, prevents client `X-Forwarded-For` spoofing), or a trusted IP/CIDR list or preset (`loopback`), or `true` (trusts the whole chain — insecure, avoid). |
 
 Store-tunable settings live in the `app_settings` table, editable in the admin
 UI at `/admin/settings` (guarded by `settings:manage` — values only, keys are
