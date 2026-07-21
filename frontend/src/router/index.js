@@ -20,7 +20,20 @@ import SettingsView from '../views/admin/SettingsView.vue';
 import AuditLogView from '../views/admin/AuditLogView.vue';
 import LoginView from '../views/LoginView.vue';
 import RegisterView from '../views/RegisterView.vue';
+import ContentPageView from '../views/ContentPageView.vue';
+import { CONTENT_NAV } from '@/config/content';
 import { useAuthStore } from '@/stores/auth';
+
+// Static content / legal pages (About, Contact, Terms, Privacy): one route per
+// slug, open to everyone (guests and signed-in shoppers/staff alike), all
+// rendered by the single generic ContentPageView driven by @/config/content.
+const contentRoutes = CONTENT_NAV.map(({ slug }) => ({
+  path: slug,
+  name: `content-${slug}`,
+  component: ContentPageView,
+  props: { slug },
+  meta: { guestOk: true },
+}));
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -70,6 +83,9 @@ const router = createRouter({
           meta: { requiresPerm: ['settings:manage'] } },
         { path: 'admin/audit-log',  name: 'admin-audit-log',  component: AuditLogView,
           meta: { requiresPerm: ['audit:read'] } },
+
+        // Public content / legal pages
+        ...contentRoutes,
 
         { path: '', redirect: () => homeFor() },
         { path: ':pathMatch(.*)*', redirect: () => homeFor() },

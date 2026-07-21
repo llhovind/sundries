@@ -6,6 +6,7 @@ import CartSidebar from '@/components/CartSidebar.vue';
 import StaffSidebar from '@/components/StaffSidebar.vue';
 import ProfileModal from '@/components/ProfileModal.vue';
 import { visibleNavGroups } from '@/config/navigation';
+import { CONTENT_NAV } from '@/config/content';
 
 const auth        = useAuthStore();
 const router      = useRouter();
@@ -52,7 +53,14 @@ async function logout() {
   <main>
     <router-view />
   </main>
-  <footer class="muted">Powered by Online Store</footer>
+  <footer class="muted">
+    <nav class="footer-links">
+      <router-link v-for="item in CONTENT_NAV" :key="item.slug" :to="'/' + item.slug">
+        {{ item.label }}
+      </router-link>
+    </nav>
+    <span class="footer-credit">Powered by Online Store</span>
+  </footer>
 </template>
 
 <style lang="scss" scoped>
@@ -133,8 +141,33 @@ main {
 
 footer {
   grid-column: 1 / -1;
-  text-align: center;
+  // Single row: links left, credit right — stays within the fixed 1.5rem footer
+  // track defined in assets/main.css, so the page never gains a second scrollbar.
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   line-height: 1.5rem;
   font-size: 0.8rem;
+  overflow: hidden;
+
+  .footer-links {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 0;
+    overflow: hidden;
+
+    a {
+      color: inherit;
+      text-decoration: none;
+      white-space: nowrap;
+      &:hover { color: var(--accent); text-decoration: underline; }
+    }
+  }
+
+  .footer-credit {
+    white-space: nowrap;
+  }
 }
 </style>

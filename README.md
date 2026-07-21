@@ -167,6 +167,13 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
 > on a cloud deployment) so one client cannot spray OTP email across many
 > addresses or hammer `/register`.
 
+> **Security headers ship in the app.** The API applies [`helmet`](https://helmetjs.github.io/)
+> globally (CSP, HSTS, `X-Content-Type-Options`, `X-Frame-Options`, and it strips
+> `X-Powered-By`). Defaults assume nginx serves the SPA and proxies `/api` +
+> `/images` from the **same origin** — if you split the frontend onto a different
+> origin, relax helmet's CSP / Cross-Origin-Resource-Policy in `backend/app.js`
+> accordingly. HSTS only takes effect over HTTPS, so terminate TLS at nginx.
+
 **Install checklist**
 
 1. PostgreSQL on `db1`: create the database and an app user (see grants below).

@@ -1,5 +1,6 @@
 const config = require('./common/config');   // validates required env vars — throws at startup if any are missing
 var express = require('express');
+var helmet = require('helmet');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var morgan = require('morgan');
@@ -15,6 +16,16 @@ var app = express();
 // on every log line and audit row is the real client, not the proxy. Must be
 // set before any middleware reads req.ip.
 app.set('trust proxy', config.trustProxy);
+
+// Security response headers on every response — set first so even early-exiting
+// routes (webhooks, static images) are covered, and strip the default
+// `X-Powered-By: Express` fingerprint. Helmet's defaults suit this deployment:
+// nginx serves the SPA document and proxies /api + /images from the SAME origin
+// (the frontend uses relative URLs — see frontend/src/services/api.js and the
+// /images references), so the default same-origin CSP and Cross-Origin-Resource-
+// Policy never block the storefront. Revisit these two if the frontend is ever
+// served from a different origin than the API.
+app.use(helmet());
 
 // Per-request context (correlation id + client ip) — must be first so every
 // log line and DB audit row downstream can attribute itself to the request.
