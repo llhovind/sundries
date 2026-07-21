@@ -311,10 +311,17 @@ Simple, provider-independent, restore-tested:
   run the sanity queries — an unrestored backup is a hope, not a plan.
 * On RDS, treat native automated backups as primary (point-in-time recovery) and these
   archives as the portable fallback.
-* **Images are not in the database dump.** On the local store, add `backend/uploads/`
-  to your file backup; on the S3 store, bucket versioning plus the noncurrent-version
-  lifecycle rule is the equivalent. A restored database whose images are gone still
-  renders a broken catalog.
+* **Images have no built-in backup — this is a DevOps addition, not a code one.**
+  Nothing in this repo backs up the files served at `/images`: `db/backup.sh` dumps
+  the database only, and the image storage adapters (`uploads/`, S3) write files but
+  never copy them anywhere. Covering them is a deployment-level task you must add:
+  on the local store, include `backend/uploads/` in your file backup (e.g. `rsync`
+  or `tar` in the same nightly cron as the DB dump, with matching retention); on the
+  S3 store, bucket versioning plus the noncurrent-version lifecycle rule (§3) is the
+  equivalent, and cross-region replication if the bucket itself is a single point of
+  failure. Until that exists, image loss is unrecoverable — the database keeps the
+  `primary_image` keys, so a restore yields rows pointing at files that no longer
+  exist and a catalog full of broken images.
 
 ---
 
