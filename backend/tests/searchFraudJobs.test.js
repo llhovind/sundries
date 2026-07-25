@@ -1,8 +1,10 @@
 'use strict';
 
 /**
- * Phase 5 integration tests: search port (Postgres FTS + outbox pipeline),
- * fraud screening, mail-provider selection, and the pg-boss job runner.
+ * Integration tests for the pluggable infrastructure services: the search
+ * port (Postgres FTS + outbox pipeline), provider-registry resolution for
+ * search and mail (env wins, unknown providers fail loud), fraud screening,
+ * and the pg-boss job runner (queued vs. inline execution).
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });

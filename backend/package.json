@@ -14,6 +14,7 @@
     "bootstrap": "node db/bootstrap.js",
     "setup": "node db/migrate.js && node db/bootstrap.js",
     "seed:demo": "node db/seedDemo.js",
+    "docs:api": "node bin/generateApiDocs.js",
     "test": "jest --testTimeout=15000 --forceExit"
   },
   "jest": {

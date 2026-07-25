@@ -1,0 +1,52 @@
+# Local-development backing services only: PostgreSQL and a mail sink.
+#
+# This intentionally does NOT run the API or the frontend — those stay on the
+# host under `npm run dev` so you keep hot reload, debuggers and native speed
+# (see §1 of the README). Compose here exists to remove the two manual
+# `docker run` commands the README would otherwise ask for, and to gate startup
+# on Postgres actually being ready.
+#
+#   docker compose up -d          # start Postgres (:5432) + Mailpit (:1025/:8025)
+#   docker compose down           # stop; data survives in the named volume
+#   docker compose down -v        # stop AND wipe the database volume
+#
+# Matching backend/.env for this stack:
+#   DB_HOST=localhost  DB_PORT=5432  DB_USER=postgres  DB_PASSWORD=dev
+#   DB_NAME=store      DB_SSL=false
+#   SMTP_HOST=localhost  SMTP_PORT=1025  SMTP_FROM=noreply@example.com
+#
+# Read OTP / notification mail at http://localhost:8025.
+
+services:
+  db:
+    image: postgres:15
+    container_name: store-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: store
+    ports:
+      - "5432:5432"
+    volumes:
+      - store-db-data:/var/lib/postgresql/data
+    # Let dependents (and humans) wait for Postgres to accept connections
+    # rather than racing the first migration against a half-booted server.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d store"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mail:
+    image: axllent/mailpit:latest
+    container_name: store-mail
+    ports:
+      - "1025:1025"   # SMTP — point SMTP_HOST/SMTP_PORT here
+      - "8025:8025"   # Web UI — read captured mail at http://localhost:8025
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+
+volumes:
+  store-db-data:

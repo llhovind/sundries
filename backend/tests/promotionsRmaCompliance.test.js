@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Phase 7 integration tests: promotion engine (validation, checkout pricing,
+ * Integration tests for the promotion engine (validation, checkout pricing,
  * atomic redemption), the RMA state machine (request → approve → receive with
  * restock → refund), and compliance request processing.
  */

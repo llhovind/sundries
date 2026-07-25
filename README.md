@@ -77,6 +77,12 @@ GDPR/CCPA request intake exists (`POST /api/v1/compliance/requests`), but
 processing is deliberately semi-manual — see the flagged stub notes in
 `backend/services/complianceService.js`.
 
+**API reference**: [`docs/API.md`](docs/API.md) lists every endpoint with the
+permission each requires. It is *generated* (`cd backend && npm run docs:api`)
+from `backend/config/routePermissions.js` — the same map the server validates
+against its live router at boot — so it lists exactly what the API serves, with
+the codes the guards actually enforce.
+
 ---
 
 ## 1. Local development
@@ -84,22 +90,22 @@ processing is deliberately semi-manual — see the flagged stub notes in
 ### Prerequisites
 
 * Node.js 20+ (the job-queue dependency, pg-boss v10, requires it)
-* A reachable PostgreSQL 13+ (15 recommended). Not bundled — point at any host you have,
-  or run one with Docker:
+* PostgreSQL 13+ (15 recommended) and somewhere for mail to land. Login is
+  passwordless, so the very **first** sign-in needs a working mailbox. Both come
+  up together with the bundled Compose file — nothing else to install:
 
   ```bash
-  docker run -d --name store-db -p 5432:5432 \
-    -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=store postgres:15
+  docker compose up -d      # Postgres on :5432, Mailpit on :1025 (SMTP) + :8025 (web UI)
   ```
 
-  That container's superuser is `postgres` / `dev`, so the matching `.env` lines are
-  `DB_USER=postgres`, `DB_PASSWORD=dev`, `DB_NAME=store`, `DB_SSL=false`. (The
-  `.env.example` default of `DB_USER=store_web` assumes a database where you have
-  already created a dedicated app role — see §2.)
-* A place for mail to land. Login is passwordless, so the very first sign-in needs a
-  working mailbox — [Mailpit](https://github.com/axllent/mailpit) is the easy answer:
-  `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit`, then set `SMTP_HOST=localhost`,
-  `SMTP_PORT=1025`, and read the code at http://localhost:8025.
+  The matching `backend/.env` lines are `DB_USER=postgres`, `DB_PASSWORD=dev`,
+  `DB_NAME=store`, `DB_SSL=false`, `SMTP_HOST=localhost`, `SMTP_PORT=1025`; read
+  the OTP codes at http://localhost:8025. `docker compose down -v` wipes the
+  database volume when you want a clean slate.
+
+  Prefer your own Postgres / SMTP? Point `DB_*` / `SMTP_*` at them instead — nothing
+  requires Compose. (The `.env.example` default of `DB_USER=store_web` assumes a
+  database where you have already created a dedicated app role — see §2.)
 
 ### Setup
 
