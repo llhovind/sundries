@@ -6,7 +6,7 @@ import CartSidebar from '@/components/CartSidebar.vue';
 import StaffSidebar from '@/components/StaffSidebar.vue';
 import ProfileModal from '@/components/ProfileModal.vue';
 import { visibleNavGroups } from '@/config/navigation';
-import { CONTENT_NAV } from '@/config/content';
+import { CONTENT_NAV, STORE_INFO } from '@/config/content';
 
 const auth        = useAuthStore();
 const router      = useRouter();
@@ -59,7 +59,11 @@ async function logout() {
         {{ item.label }}
       </router-link>
     </nav>
-    <span class="footer-credit">Powered by Online Store</span>
+    <!-- AGPL §13: network users must be able to reach this deployment's source.
+         Renders as a link once STORE_INFO.sourceUrl is set, plain text until then. -->
+    <a v-if="STORE_INFO.sourceUrl" class="footer-credit" :href="STORE_INFO.sourceUrl"
+       target="_blank" rel="noopener noreferrer">Powered by Online Store — source</a>
+    <span v-else class="footer-credit">Powered by Online Store</span>
   </footer>
 </template>
 
@@ -168,6 +172,11 @@ footer {
 
   .footer-credit {
     white-space: nowrap;
+    color: inherit;
+    text-decoration: none;
+
+    // Only the source-link variant is interactive; the plain <span> ignores this.
+    &:hover { color: var(--accent); text-decoration: underline; }
   }
 }
 </style>

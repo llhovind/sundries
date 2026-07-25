@@ -2,6 +2,10 @@
   "name": "online-store",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node ./bin/www",
     "dev": "nodemon ./bin/www",
@@ -9,6 +13,7 @@
     "migrate": "node db/migrate.js",
     "bootstrap": "node db/bootstrap.js",
     "setup": "node db/migrate.js && node db/bootstrap.js",
+    "seed:demo": "node db/seedDemo.js",
     "test": "jest --testTimeout=15000 --forceExit"
   },
   "jest": {

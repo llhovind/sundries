@@ -35,6 +35,17 @@ export const STORE_INFO = {
     contactEmail: 'support@storefront.example',
     privacyEmail: 'privacy@storefront.example',
     postalAddress: '123 Commerce Street, Suite 100, Wilmington, DE 19801, USA',
+    /**
+     * Where the source of THIS deployment can be obtained.
+     *
+     * This project is licensed AGPL-3.0-or-later. Section 13 requires that users
+     * interacting with a modified version over a network be offered its source,
+     * and a link in the interface is the conventional way to discharge that. Set
+     * this to your own repository (or a source archive) when you deploy; the
+     * footer renders the credit as plain text while it is empty, so an unset
+     * value never advertises an offer that does not exist.
+     */
+    sourceUrl:    '',
 };
 
 /** Effective date stamped on the legal documents. */

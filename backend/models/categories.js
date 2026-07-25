@@ -8,8 +8,8 @@ const Categories = (function () {
         create,
         update,
         remove,
-        getForItem,
-        setForItem
+        getForProduct,
+        setForProduct
     };
 
     function findAll({ search, limit = 100, offset = 0 } = {}) {
@@ -65,27 +65,27 @@ const Categories = (function () {
         ).then(res => res.rows[0] || null);
     }
 
-    function getForItem(item_no) {
+    function getForProduct(productNo) {
         return db.query(
             `SELECT c.id, c.name FROM categories c
-             JOIN items_categories ic ON ic.category_id = c.id
-             WHERE ic.item_no = $1
+             JOIN product_categories pc ON pc._category_id = c.id
+             WHERE pc._product_no = $1
              ORDER BY lower(c.name)`,
-            [item_no]
+            [productNo]
         ).then(res => res.rows);
     }
 
-    function setForItem(item_no, categoryIds) {
-        // Replace all categories for this item atomically.
+    function setForProduct(productNo, categoryIds) {
+        // Replace all categories for this product atomically.
         // Must use withTransaction (dedicated client) — db.query() draws from the pool
         // and different calls can land on different connections, breaking transaction semantics.
         return withTransaction(async (client) => {
-            await client.query('DELETE FROM items_categories WHERE item_no = $1', [item_no]);
+            await client.query('DELETE FROM product_categories WHERE _product_no = $1', [productNo]);
             if (categoryIds && categoryIds.length) {
                 const rows = categoryIds.map((_, i) => `($1, $${i + 2})`).join(', ');
                 await client.query(
-                    `INSERT INTO items_categories (item_no, category_id) VALUES ${rows}`,
-                    [item_no, ...categoryIds]
+                    `INSERT INTO product_categories (_product_no, _category_id) VALUES ${rows}`,
+                    [productNo, ...categoryIds]
                 );
             }
         });

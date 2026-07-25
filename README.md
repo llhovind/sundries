@@ -1,5 +1,8 @@
 # Online Store
 
+[![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
 A generic online store: Express + PostgreSQL backend (plain SQL, no ORM) and a Vue 3 frontend.
 Supports single items, items with option variants (color, quality, size), and goods sold by
 length (feet/yards/meters), with multi-warehouse FIFO-costed inventory, reservations at
@@ -43,12 +46,13 @@ retired token revokes the whole token family.
 **Staff UI**: a permission-filtered sidebar (staff see only the links their
 roles can use) grouped as **Sales** (Orders, Returns, Customers), **Catalog**
 (Products, Categories, Promotions), **Inventory** (Stock, Transfers,
-Purchasing), **Admin** (Users, Roles, Settings), plus **Reports**:
+Purchasing), **Admin** (Users, Roles, Settings, Audit Log), plus **Reports**:
 
 * **Inventory** — multi-warehouse stock with FIFO cost layers; transfers move
   stock through an in-transit `transport` warehouse; purchase orders receive
-  at line level and write costed IN ledger rows. Received stock fills
-  backorders and sends back-in-stock notifications automatically (1-minute job).
+  at line level and write costed IN ledger rows (vendors are created from the
+  Purchasing screen). Received stock fills backorders and sends back-in-stock
+  notifications automatically (1-minute job).
 * **Orders** — fulfillment with capture-on-first-ship and partial shipments,
   refunds (cumulative-guarded), and an RMA queue with a configurable return
   window (`returns.window_days`) and suggested-refund prefill.
@@ -57,7 +61,9 @@ Purchasing), **Admin** (Users, Roles, Settings), plus **Reports**:
   locked), and store settings (§5). Endpoint permissions live in
   `backend/config/routePermissions.js`, a code-only map validated against the
   live router and the `permissions` table at boot — an unguarded endpoint or
-  unknown permission code fails startup.
+  unknown permission code fails startup. The audit log viewer (`audit:read`)
+  reads the immutable `audit_log` written by database triggers, with the acting
+  user, IP and correlation id on every row.
 * **Reports** — each report is one self-contained file in
   `backend/controllers/reports/` (metadata + params + columns + SQL),
   discovered at boot; access is per category permission
@@ -79,7 +85,21 @@ processing is deliberately semi-manual — see the flagged stub notes in
 
 * Node.js 20+ (the job-queue dependency, pg-boss v10, requires it)
 * A reachable PostgreSQL 13+ (15 recommended). Not bundled — point at any host you have,
-  or run one with Docker: `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=dev postgres:15`
+  or run one with Docker:
+
+  ```bash
+  docker run -d --name store-db -p 5432:5432 \
+    -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=store postgres:15
+  ```
+
+  That container's superuser is `postgres` / `dev`, so the matching `.env` lines are
+  `DB_USER=postgres`, `DB_PASSWORD=dev`, `DB_NAME=store`, `DB_SSL=false`. (The
+  `.env.example` default of `DB_USER=store_web` assumes a database where you have
+  already created a dedicated app role — see §2.)
+* A place for mail to land. Login is passwordless, so the very first sign-in needs a
+  working mailbox — [Mailpit](https://github.com/axllent/mailpit) is the easy answer:
+  `docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit`, then set `SMTP_HOST=localhost`,
+  `SMTP_PORT=1025`, and read the code at http://localhost:8025.
 
 ### Setup
 
@@ -89,6 +109,7 @@ cd backend
 npm install
 cp .env.example .env         # then edit: DB_*, JWT secrets, SMTP_*, ADMIN_EMAIL
 npm run setup                # = npm run migrate (schema + seeds) + node db/bootstrap.js (initial admin)
+npm run seed:demo            # optional: sample catalog with stock (see below)
 npm run dev                  # API on http://localhost:3000
 
 # Frontend (second terminal)
@@ -96,6 +117,9 @@ cd frontend
 npm install
 npm run dev                  # UI on http://localhost:5173, proxies /api to :3000
 ```
+
+Sign in at http://localhost:5173/login as `ADMIN_EMAIL`: enter the address, then the
+one-time code that arrives in Mailpit.
 
 Notes:
 
@@ -106,16 +130,43 @@ Notes:
 * Migrations are ordinary `.sql` files in `backend/db/migrations/`, applied in filename
   order and tracked in `schema_migrations`. A fresh database is fully constructed and
   seeded (roles/permissions, units of measure, MAIN + TRANSIT warehouses, shipping rules)
-  by `npm run migrate`.
+  by `npm run migrate`. `npm run migrate` creates the database itself if the configured
+  user has `CREATEDB`.
+
+### Optional: the demo catalog
+
+`npm run setup` leaves you with a correct but **empty** store — no products, so the
+storefront and the checkout demo below have nothing to sell. `npm run seed:demo`
+fills it in:
+
+* three products covering the three selling models — a plain unit good, a unit good
+  with a Color × Size option matrix, and a cut-to-length good sold by the foot
+* opening stock received into `MAIN` at **two different unit costs** for several
+  variants, so FIFO costing is visible in the ledger and the COGS report rather than
+  being a claim in a README
+* one out-of-stock variant, so the backorder / notify-me path is reachable
+* a demo vendor, so purchase orders can be raised immediately
+
+It is idempotent (a marker in `products.attributes`), refuses to run with
+`NODE_ENV=production` unless `ALLOW_DEMO_SEED=true`, and writes through the models
+rather than raw SQL — the demo rows are built exactly the way the app builds real
+ones. Contents live in `backend/db/demoCatalog.js`; remove them with
+`DELETE FROM products WHERE attributes ? 'demo_seed';`.
+
+To build a catalog by hand instead: sign in as the admin and use **Catalog → Products**
+(product → options → variants), then receive stock in **Inventory → Stock** or via a
+purchase order in **Inventory → Purchasing** (which is also where vendors are created).
 
 ### Demo: checkout with the fake payment provider
 
 `PAYMENT_PROVIDER=fake` (the default) swaps Stripe for a local simulator that
 drives the exact same webhook pipeline as production — no keys, no network.
-With the API running:
+With the API running and a catalog in place (`npm run seed:demo`, or your own
+products — `curl -s localhost:3000/api/v1/products` to find a real `variant_no`):
 
 ```bash
 # 1. Guest places an order (creates an implicit customer account)
+#    variant_no 1 is the demo seed's cast-iron skillet.
 curl -s -X POST localhost:3000/api/v1/checkout/guest -H 'Content-Type: application/json' -d '{
   "email":"demo@example.com", "name":"Demo Guest",
   "shipTo":{"address":"1 Demo St","city":"Springfield","state":"IL","zip":"62701","country":"US"},
@@ -139,14 +190,19 @@ point a Stripe webhook at `POST /api/v1/payments/webhook/stripe`.
 ### Tests
 
 ```bash
-cd backend && npm test
+cd backend  && npm test              # Jest — API + DB integration suites
+cd frontend && npm run test:unit     # Vitest — component and config units
+cd frontend && npx playwright test   # Playwright — end-to-end, boots API + Vite itself
 ```
 
-The suites are integration-style: they exercise the real DB triggers, reservation
+All three run in CI on every push and pull request (`.github/workflows/ci.yml`).
+
+The backend suites are integration-style: they exercise the real DB triggers, reservation
 functions, and the full route→controller→service path, so they need a **disposable**
 database: create one, run `npm run migrate` against it, point `.env` at it. Ledger
 rows are append-only by design; recreate the test DB rather than trying to clean it.
-(Mail is forced to the `noop` adapter during tests.)
+(Mail is forced to the `noop` adapter during tests.) The e2e run needs a migrated
+database too — `playwright.config.js` starts both servers against whatever `.env` says.
 
 ---
 
@@ -374,3 +430,21 @@ manages shipping rules, weight-surcharge bands, tax rates, and warehouses
   reject UPDATE/DELETE at the trigger level. Corrections are new rows.
 * In-transit stock is a real balance in a `transport`-type warehouse, moved by
   `stock_transfers` documents (carrier, manifest, billing per transfer).
+
+---
+
+## 7. License
+
+[GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later).
+
+Use it, run a shop on it, modify it. The one obligation that matters in practice:
+**if you run a modified version as a network service, you must offer your users its
+source.** Section 13 makes running it for the public equivalent to distributing it —
+this is deliberate, so improvements made by shops running this code stay available to
+the shops that come after.
+
+To discharge that offer, set `STORE_INFO.sourceUrl` in
+[`frontend/src/config/content.js`](frontend/src/config/content.js) to your repository
+or a source archive; the storefront footer then links to it. Left empty, the footer
+renders a plain credit and makes no offer — correct for an unmodified private trial,
+not for a public deployment of modified code.

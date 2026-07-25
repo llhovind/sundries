@@ -5,6 +5,7 @@ import { usePurchaseOrdersStore } from '@/stores/purchaseOrders';
 import { apiErrorMessage } from '@/stores/storeUtils';
 import { fixedNum } from '@/composables/utils';
 import TableComponent from '@/components/TableComponent.vue';
+import VendorCreateModal from '@/components/VendorCreateModal.vue';
 
 const auth  = useAuthStore();
 const store = usePurchaseOrdersStore();
@@ -41,6 +42,14 @@ function openCreate() {
 
 const canCreate = computed(() =>
     form.vendor_id && form.warehouse_no && form.lines.length > 0);
+
+// Vendors are a prerequisite for any purchase order, so they are created from
+// here rather than in a separate admin screen the user would have to find first.
+const showVendorModal = ref(false);
+
+function onVendorCreated(vendorId) {
+    form.vendor_id = vendorId;
+}
 
 const formSubtotal = computed(() =>
     form.lines.reduce((sum, l) => sum + Number(l.qty) * Number(l.unit_cost), 0));
@@ -174,9 +183,11 @@ const STATUS_PILL = { open: 'warn', received: 'ok', closed: '', cancelled: '' };
       <div class="inline-form">
         <label>Vendor
           <select v-model="form.vendor_id" class="input wide">
+            <option v-if="!store.vendors.length" :value="null" disabled>No vendors yet — add one</option>
             <option v-for="v in store.vendors" :key="v.id" :value="v.id">{{ v.name }}</option>
           </select>
         </label>
+        <button v-if="canManage" class="btn" type="button" @click="showVendorModal = true">+ Vendor</button>
         <label>Deliver to
           <select v-model="form.warehouse_no" class="input">
             <option v-for="w in store.warehouses" :key="w.warehouse_no" :value="w.warehouse_no">{{ w.code }}</option>
@@ -224,6 +235,10 @@ const STATUS_PILL = { open: 'warn', received: 'ok', closed: '', cancelled: '' };
         <span v-if="form.lines.length" class="muted">Subtotal: $ {{ fixedNum(formSubtotal, 2) }}</span>
       </div>
     </div>
+
+    <VendorCreateModal v-if="showVendorModal"
+                       @created="onVendorCreated"
+                       @close="showVendorModal = false" />
 
     <TableComponent
       :store="store"

@@ -31,6 +31,18 @@ export const usePurchaseOrdersStore = createListStore('purchaseOrders', {
             warehouses.value = wRes.data.content.warehouses.filter(w => w.wh_type === 'standard');
         }
 
+        /**
+         * Creates a vendor and refreshes the picklist so the caller can select
+         * it immediately. Vendors are a purchasing prerequisite — without this
+         * a fresh install has no way to raise its first purchase order.
+         * @returns {Promise<{id: number, name: string}>}
+         */
+        async function createVendor(payload) {
+            const res = await api.post('/api/v1/vendors', payload);
+            await loadPicklists();
+            return res.data.content.vendor;
+        }
+
         /** Variant picker backing search (name/SKU → balances rows). */
         async function searchVariants(q) {
             const res = await api.get(
@@ -63,7 +75,7 @@ export const usePurchaseOrdersStore = createListStore('purchaseOrders', {
 
         return {
             vendors, warehouses, loadPicklists, searchVariants,
-            getPo, createPo, receivePo,
+            createVendor, getPo, createPo, receivePo,
             close:  lifecycle('close'),
             cancel: lifecycle('cancel'),
         };
