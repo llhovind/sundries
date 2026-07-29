@@ -13,7 +13,7 @@
 --   * inventory_transactions is range-partitioned from day one; small installs
 --     simply run everything in the DEFAULT partition (see fn_ensure_inventory_partitions).
 --
--- Requires PostgreSQL 13+ (row triggers on partitioned tables). Tested target: 15.
+-- Requires PostgreSQL 13+ (row triggers on partitioned tables). Tested target: 16 (CI).
 -- ============================================================================
 
 -- ────────────────────────────────────────────────────────────────────────────

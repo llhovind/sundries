@@ -91,7 +91,8 @@ the codes the guards actually enforce.
 
 * Node.js 20.19+ or 22.12+ (backend needs 20+ for pg-boss v10; the frontend's
   Vite 8 toolchain sets the tighter floor)
-* PostgreSQL 13+ (15 recommended) and somewhere for mail to land. Login is
+* PostgreSQL 13+ (16 recommended — the version CI tests against) and somewhere
+  for mail to land. Login is
   passwordless, so the very **first** sign-in needs a working mailbox. Both come
   up together with the bundled Compose file — nothing else to install:
 
@@ -220,7 +221,7 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
 **Topology**
 
 * `web1`: Node API under systemd, nginx in front for TLS + static frontend files
-* `db1`: PostgreSQL 15; only reachable from `web1` (firewall / private VLAN)
+* `db1`: PostgreSQL 16; only reachable from `web1` (firewall / private VLAN)
 * Both in a DMZ; only nginx :443 is exposed
 
 > **Per-IP rate limiting is the deployment's job.** The API rate-limits OTP
@@ -440,7 +441,17 @@ manages shipping rules, weight-surcharge bands, tax rates, and warehouses
 
 ---
 
-## 7. License
+## 7. Security
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
+Do not open a public issue.
+
+Deployment-side security is covered where it belongs: per-IP rate limiting in §2,
+TLS and `TRUST_PROXY` in §2–§3, and secret handling in §5.
+
+---
+
+## 8. License
 
 [GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later).
 

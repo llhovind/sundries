@@ -10,6 +10,13 @@
 #   docker compose down           # stop; data survives in the named volume
 #   docker compose down -v        # stop AND wipe the database volume
 #
+# Pinned to the same Postgres major that CI tests against — dev and CI drifting
+# apart on the database is how integrity bugs reach main unnoticed. Bumping that
+# major against an existing store-db-data volume makes Postgres refuse to start
+# ("database files are incompatible with server"): run `docker compose down -v`,
+# then `npm run setup` in backend/ to rebuild. Local data here is disposable by
+# design; nothing in this file is meant for production.
+#
 # Matching backend/.env for this stack:
 #   DB_HOST=localhost  DB_PORT=5432  DB_USER=postgres  DB_PASSWORD=dev
 #   DB_NAME=store      DB_SSL=false
@@ -19,7 +26,7 @@
 
 services:
   db:
-    image: postgres:15
+    image: postgres:16
     container_name: store-db
     environment:
       POSTGRES_USER: postgres
