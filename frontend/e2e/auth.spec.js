@@ -33,12 +33,13 @@ test.describe('Authentication flows', () => {
         await page.click('button[type="submit"]');
 
         await expect(page).toHaveURL(/\/shop/);
-        await expect(page.locator('nav')).toContainText('My Orders');
+        // Scoped to the header: the footer carries its own <nav> of content links.
+        await expect(page.locator('header nav')).toContainText('My Orders');
         await expect(page.locator('.username-btn')).toContainText(email);
 
         // Customers hold no staff permissions — no admin links
-        await expect(page.locator('nav a[href="/admin/orders"]')).not.toBeVisible();
-        await expect(page.locator('nav a[href="/categories"]')).not.toBeVisible();
+        await expect(page.locator('header nav a[href="/admin/orders"]')).not.toBeVisible();
+        await expect(page.locator('header nav a[href="/categories"]')).not.toBeVisible();
 
         await page.click('.logout-btn');
         await expect(page).toHaveURL(/\/login/);
