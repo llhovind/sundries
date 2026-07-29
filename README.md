@@ -89,7 +89,8 @@ the codes the guards actually enforce.
 
 ### Prerequisites
 
-* Node.js 20+ (the job-queue dependency, pg-boss v10, requires it)
+* Node.js 20.19+ or 22.12+ (backend needs 20+ for pg-boss v10; the frontend's
+  Vite 8 toolchain sets the tighter floor)
 * PostgreSQL 13+ (15 recommended) and somewhere for mail to land. Login is
   passwordless, so the very **first** sign-in needs a working mailbox. Both come
   up together with the bundled Compose file — nothing else to install:
