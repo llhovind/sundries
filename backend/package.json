@@ -1,6 +1,6 @@
 {
   "name": "sundries-api",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Sundries API — self-hosted ecommerce platform for physical goods. Express + PostgreSQL, plain SQL.",
   "license": "AGPL-3.0-or-later",
