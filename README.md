@@ -449,7 +449,11 @@ manages shipping rules, weight-surcharge bands, tax rates, and warehouses
 
 ---
 
-## 7. Security
+## 7. Contributing & security
+
+Setup, the checks CI runs, and the conventions that come up in review (append-only
+migrations, audited writes, adapter boundaries) are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Open an issue before starting anything large.
 
 Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 Do not open a public issue.

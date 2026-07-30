@@ -1,0 +1,39 @@
+# Dependency updates for the two npm workspaces and the CI workflow itself.
+#
+# Grouped deliberately: a solo maintainer reviewing ten separate patch-bump PRs
+# a week stops reviewing them at all. Minor and patch updates arrive as one PR
+# per ecosystem; majors stay separate because they need to be read individually.
+#
+# This covers *version* updates only. Dependabot security alerts are enabled in
+# the repository settings and are independent of this file — see the known
+# accepted dev-dependency advisories in SECURITY.md before filing one.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Actions are pinned by major tag (actions/checkout@v4); this catches the
+  # moves to v5 that would otherwise go unnoticed until a runner deprecation.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        update-types: [minor, patch]
