@@ -1,15 +1,23 @@
-# Online Store
+# Sundries
 
 [![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-A generic online store: Express + PostgreSQL backend (plain SQL, no ORM) and a Vue 3 frontend.
-Supports single items, items with option variants (color, quality, size), and goods sold by
-length (feet/yards/meters), with multi-warehouse FIFO-costed inventory, reservations at
-checkout, and an immutable inventory/payments audit trail.
+A self-hosted ecommerce platform for physical goods: Express + PostgreSQL backend (plain SQL,
+no ORM) and a Vue 3 frontend. It makes no assumptions about what you sell — single items,
+items with option variants (color, quality, size), and goods cut to length (feet/yards/meters)
+are all first-class, over multi-warehouse FIFO-costed inventory, reservations at checkout, and
+an immutable inventory/payments audit trail.
 
-The same codebase scales **down** to a single-maker shop doing a few orders a week and **up**
-to multi-instance cloud deployments. The difference is configuration, not code.
+Domain-agnostic in what it sells, opinionated in how it holds together. The same codebase
+scales **down** to a single-maker shop doing a few orders a week and **up** to multi-instance
+cloud deployments — the difference is configuration, not code.
+
+![The Sundries storefront showing the demo catalog: a unit good, a good with option
+variants, and a cut-to-length good priced per foot](docs/images/sundries-screenshot.png)
+
+<sub>The storefront after `npm run seed:demo` (§1) — the three products are the three
+selling models: plain unit good, option-variant matrix, and goods sold by the foot.</sub>
 
 ---
 
@@ -253,11 +261,11 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
    Description=Store API
    After=network.target
    [Service]
-   WorkingDirectory=/opt/online-store/backend
+   WorkingDirectory=/opt/sundries/backend
    ExecStart=/usr/bin/node ./bin/www
    Restart=always
    User=store
-   EnvironmentFile=/opt/online-store/backend/.env
+   EnvironmentFile=/opt/sundries/backend/.env
    [Install]
    WantedBy=multi-user.target
    ```
@@ -270,7 +278,7 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
 
    ```cron
    # nightly logical backup at 02:15 (see §4)
-   15 2 * * * /opt/online-store/backend/db/backup.sh >> /var/log/store-backup.log 2>&1
+   15 2 * * * /opt/sundries/backend/db/backup.sh >> /var/log/store-backup.log 2>&1
    ```
 
 > **Catalog images are on local disk here** (`IMAGE_PROVIDER` unset →

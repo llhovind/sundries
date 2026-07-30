@@ -1,6 +1,6 @@
 # Storefront UI
 
-Vue 3 + Pinia + Vite frontend for the online store. See the [root README](../README.md)
+Vue 3 + Pinia + Vite frontend for Sundries. See the [root README](../README.md)
 for architecture, deployment and configuration.
 
 ```bash

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 001_initial_schema.sql
--- Generic online store — initial schema for a fresh install.
+-- Sundries — initial schema for a fresh install.
 --
 -- Design principles (see project plan):
 --   * Immutable inventory & payment ledgers — enforced by triggers, not convention.

@@ -62,8 +62,8 @@ async function logout() {
     <!-- AGPL §13: network users must be able to reach this deployment's source.
          Renders as a link once STORE_INFO.sourceUrl is set, plain text until then. -->
     <a v-if="STORE_INFO.sourceUrl" class="footer-credit" :href="STORE_INFO.sourceUrl"
-       target="_blank" rel="noopener noreferrer">Powered by Online Store — source</a>
-    <span v-else class="footer-credit">Powered by Online Store</span>
+       target="_blank" rel="noopener noreferrer">Powered by Sundries — source</a>
+    <span v-else class="footer-credit">Powered by Sundries</span>
   </footer>
 </template>
 
