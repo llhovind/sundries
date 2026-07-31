@@ -1,11 +1,11 @@
 {
   "name": "sundries-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Sundries API — self-hosted ecommerce platform for physical goods. Express + PostgreSQL, plain SQL.",
   "license": "AGPL-3.0-or-later",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "node ./bin/www",
@@ -16,11 +16,16 @@
     "setup": "node db/migrate.js && node db/bootstrap.js",
     "seed:demo": "node db/seedDemo.js",
     "docs:api": "node bin/generateApiDocs.js",
-    "test": "jest --testTimeout=15000 --forceExit"
+    "test": "jest --testTimeout=15000 --forceExit",
+    "test:queue": "node --test \"tests/integration/*.test.mjs\""
   },
   "jest": {
     "setupFiles": [
       "<rootDir>/tests/setupEnv.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/integration/"
     ]
   },
   "dependencies": {
@@ -34,7 +39,7 @@
     "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
     "pg": "^8.11.3",
-    "pg-boss": "^10.4.2"
+    "pg-boss": "^12.26.3"
   },
   "devDependencies": {
     "jest": "^30.3.0",

@@ -183,22 +183,22 @@ describe('given the job runner when work is sent then it executes queued or inli
         expect(row.rows[0].fraud_flag).toBe(true);   // handler ran synchronously
     });
 
-    test('given pg-boss is running then a queued job is picked up and processed', async () => {
+    // The transport itself is not exercised here: this suite runs on the
+    // inline adapter (see tests/setupEnv.js), so what is under test is that
+    // Jobs routes through whichever adapter is configured and that the
+    // registered consumer is the right one. Delivery through real pg-boss —
+    // enqueue, poll, pick up, complete — is covered by
+    // tests/integration/queue.pgboss.test.mjs.
+    test('given the queue is running then send routes the job to its consumer', async () => {
         await Jobs.start();
         expect(Jobs.isRunning()).toBe(true);
 
         const ordNo = await makeGuestOrder(`queued-${RUN}@guerrillamail.com`);
         await Jobs.send(Jobs.QUEUES.ORDER_SCREEN, { ord_no: ordNo });
 
-        // pg-boss polls; give the worker a few seconds
-        let flagged = false;
-        for (let i = 0; i < 20 && !flagged; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            const row = await db.query(`SELECT fraud_flag FROM orders WHERE ord_no = $1`, [ordNo]);
-            flagged = row.rows[0].fraud_flag;
-        }
-        expect(flagged).toBe(true);
-    }, 30000);
+        const row = await db.query(`SELECT fraud_flag FROM orders WHERE ord_no = $1`, [ordNo]);
+        expect(row.rows[0].fraud_flag).toBe(true);
+    });
 
     test('given an unknown queue then send fails loud', async () => {
         await expect(Jobs.send('nonexistent-queue', {})).rejects.toThrow(/Unknown job queue/);
