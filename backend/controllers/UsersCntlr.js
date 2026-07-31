@@ -3,10 +3,10 @@
 const Pagination = require('../common/pagination');
 const Users      = require('../models/users');
 const Rbac       = require('../models/rbac');
+const { isValidEmail } = require('../common/validation');
 
 const UsersCntlr = function () {
 
-    const EMAIL_REGEX      = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const ALLOWED_STATUSES = ['active', 'inactive'];
 
     return { find, findOne, createUser, update, deactivate, listRoles, grantRole, revokeRole };
@@ -18,7 +18,7 @@ const UsersCntlr = function () {
         const { email, role, username } = req.body;
 
         if (!email) return next({ status: 400, message: 'email is required' });
-        if (!EMAIL_REGEX.test(email)) return next({ status: 400, message: 'Invalid email address' });
+        if (!isValidEmail(email)) return next({ status: 400, message: 'Invalid email address' });
         if (!role) return next({ status: 400, message: 'role is required' });
 
         Users.findByEmail(email)
