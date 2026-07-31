@@ -5,8 +5,8 @@
  */
 
 var app = require('../app');
-var debug = require('debug')('sundries:server');
 var http = require('http');
+var log = require('../common/logger').log;
 
 /**
  * Get port from environment and store in Express.
@@ -31,7 +31,7 @@ var server = http.createServer(app);
  * Async (needs the DB), so it races the listen; failure kills the process.
  */
 require('../config/validateRouteGuards').validatePermissionCodes().catch(function (err) {
-  console.error('Route permission validation failed:', err.message);
+  log('error', 'route permission validation failed', { error: err });
   process.exit(1);
 });
 
@@ -46,7 +46,7 @@ server.on('listening', onListening);
  */
 if (process.env.JOBS_INLINE !== 'false') {
   require('../services/jobs').start().catch(function (err) {
-    console.error('Job runner failed to start (API continues without background jobs):', err.message);
+    log('error', 'job runner failed to start — API continues without background jobs', { error: err });
   });
 }
 
@@ -79,18 +79,14 @@ function onError(error) {
     throw error;
   }
 
-  var bind = typeof port === 'string'
-    ? 'Pipe ' + port
-    : 'Port ' + port;
-
   // handle specific listen errors with friendly messages
   switch (error.code) {
     case 'EACCES':
-      console.error(bind + ' requires elevated privileges');
+      log('error', 'listen address requires elevated privileges', bindContext());
       process.exit(1);
       break;
     case 'EADDRINUSE':
-      console.error(bind + ' is already in use');
+      log('error', 'listen address is already in use', bindContext());
       process.exit(1);
       break;
     default:
@@ -104,8 +100,15 @@ function onError(error) {
 
 function onListening() {
   var addr = server.address();
-  var bind = typeof addr === 'string'
-    ? 'pipe ' + addr
-    : 'port ' + addr.port;
-  debug('Listening on ' + bind);
+  log('info', 'server listening', typeof addr === 'string'
+    ? { pipe: addr }
+    : { port: addr.port });
+}
+
+/**
+ * Structured context for the address being bound. Used by onError, where the
+ * server never started listening so server.address() is still null.
+ */
+function bindContext() {
+  return typeof port === 'string' ? { pipe: port } : { port: port };
 }

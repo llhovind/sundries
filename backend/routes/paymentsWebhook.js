@@ -1,7 +1,8 @@
 'use strict';
 
 const express       = require('express');
-const router        = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router        = createApiRouter('/api/v1/payments/webhook');
 const PaymentsCntlr = require('../controllers/PaymentsCntlr')();
 
 // Raw body is REQUIRED here: providers sign the exact bytes they send, and a

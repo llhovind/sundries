@@ -1,8 +1,8 @@
 'use strict';
 
 const config = require('../common/config');
-const express = require('express');
-const router  = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router  = createApiRouter('/api/v1/auth');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
 

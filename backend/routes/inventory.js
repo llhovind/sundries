@@ -1,7 +1,7 @@
 'use strict';
 
-const express           = require('express');
-const router            = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router            = createApiRouter('/api/v1/inventory');
 const { guard }         = require('../config/routePermissions');
 const { DB: db }        = require('../common/db');
 const InventoryBalances     = require('../models/inventoryBalances');
@@ -11,8 +11,9 @@ const Pagination            = require('../common/pagination');
 
 // Stock transfers (warehouse → transport → warehouse) — own router; must be
 // registered before the parameterized routes below so 'transfers' never
-// parses as a variant number.
-router.use('/transfers', require('./stockTransfers'));
+// parses as a variant number. It declares its own base path, so the mount
+// point is derived from that rather than restated here.
+router.use(require('./stockTransfers'));
 
 // GET /api/v1/inventory/balances?q=&page=&pageSize= — per-variant totals with
 // per-warehouse breakdown (inventory:read)
