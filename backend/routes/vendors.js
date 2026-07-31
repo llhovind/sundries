@@ -1,7 +1,7 @@
 'use strict';
 
-const express           = require('express');
-const router            = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router            = createApiRouter('/api/v1/vendors');
 const { guard }         = require('../config/routePermissions');
 const VendorsCntlr      = require('../controllers/VendorsCntlr')();
 
