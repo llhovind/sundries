@@ -49,7 +49,14 @@ const AppSettings = (function () {
         if (typeof value !== currentType) {
             throw badRequest(`${key} must be a ${currentType}`);
         }
-        const normalized = KEY_RULES[key] ? KEY_RULES[key](value) : value;
+        // KEY_RULES is indexed by a caller-supplied key, which looks like a
+        // prototype-pollution vector ('constructor', '__proto__', 'toString'
+        // all resolve to callables on a plain object). It isn't: the SELECT
+        // above has already returned null for any key without a row in
+        // app_settings, and rows are seeded by migrations — this API has no
+        // create path. An inherited member can therefore never be reached.
+        // Moving that existence check, or adding a create path, reopens this.
+        const normalized = KEY_RULES[key] ? KEY_RULES[key](value) : value; // codeql[js/unvalidated-dynamic-method-call]
 
         return withAudit(userId, (client) => client.query(
             `UPDATE app_settings

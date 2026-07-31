@@ -10,6 +10,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege for GITHUB_TOKEN, declared here rather than left to the
+# repository default so the workflow keeps this scope even if that default is
+# widened later. Every job only reads the tree; uploading the Playwright report
+# needs no additional scope. A job that ever has to write back — a release, a
+# comment on a PR — should raise its own `permissions:` block rather than
+# loosening this one.
+permissions:
+  contents: read
+
 # Backend config validates all of these at startup and throws if any is
 # missing. SMTP values are deliberate dummies (config requires them even
 # when unused) and MAIL_PROVIDER=noop keeps CI from attempting sends.
