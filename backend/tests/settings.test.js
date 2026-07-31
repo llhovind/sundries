@@ -97,6 +97,16 @@ describe('given app settings values when edited then types and domains are enfor
         const res = await api('put', '/api/v1/settings/values/no.such.key').send({ value: 'x' });
         expect(res.status).toBe(404);
     });
+
+    test('given a key naming an Object.prototype member when updated then 404, never an inherited callable', async () => {
+        // The domain-guard lookup is a Map so these resolve to nothing rather
+        // than to Object.prototype.constructor and friends. A 500 here would
+        // mean an inherited function was invoked as though it were a guard.
+        for (const key of ['constructor', '__proto__', 'toString', 'valueOf']) {
+            const res = await api('put', `/api/v1/settings/values/${key}`).send({ value: 'x' });
+            expect(res.status).toBe(404);
+        }
+    });
 });
 
 describe('given shipping rules and bands when managed then ranges are validated', () => {
