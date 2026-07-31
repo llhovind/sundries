@@ -1,7 +1,7 @@
 'use strict';
 
-const express       = require('express');
-const router        = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router        = createApiRouter('/api/v1/payments/fake');
 const PaymentsCntlr = require('../controllers/PaymentsCntlr')();
 
 // LOCAL DEMO ONLY — simulates the shopper completing payment at the provider.

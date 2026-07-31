@@ -1,10 +1,12 @@
 'use strict';
 
 const { ROUTE_PERMS, UNGUARDED_ROUTES } = require('./routePermissions');
+const { sharedRegistry } = require('./routeRegistry');
 
 /**
- * Startup validation that the mounted Express routes and
- * config/routePermissions.js agree exactly:
+ * Startup validation that the API's declared routes (config/routeRegistry.js,
+ * populated as route files register themselves) and config/routePermissions.js
+ * agree exactly:
  *
  *  - every guarded /api/v1 route matches its config entry code-for-code
  *  - every unguarded /api/v1 route is explicitly allow-listed
@@ -14,51 +16,22 @@ const { ROUTE_PERMS, UNGUARDED_ROUTES } = require('./routePermissions');
  * must never make it to serving traffic. validatePermissionCodes() addition-
  * ally verifies (async, needs the DB) that every referenced permission code
  * exists in the permissions table.
+ *
+ * The routes reach this file through the registry rather than through Express
+ * introspection; see config/routeRegistry.js for why that matters.
  */
 
 const API_PREFIX = '/api/v1';
 
-/** Recover the mount path of a sub-router layer from its path regexp. */
-function mountPath(layer) {
-    if (layer.regexp && layer.regexp.fast_slash) return '';
-    return layer.regexp.source
-        .replace(/^\^/, '')
-        .replace(/\\\/\?\(\?=\\\/\|\$\)$/, '')
-        .replace(/\$\/?$/, '')
-        .replace(/\\\//g, '/');
-}
-
 /**
- * Walks the app's router tree and returns a Map of
- * 'METHOD /full/path' → [permission codes collected from requirePermission
- * middlewares], both router-level (router.use) and route-level.
+ * The declared API surface: 'METHOD /full/path' → permission codes, both
+ * router-level (router.use) and route-level.
+ *
+ * @param {import('./routeRegistry').RouteRegistry} [registry]
+ * @returns {Map<string, string[]>}
  */
-function collectApiRoutes(app) {
-    const routes = new Map();
-    if (!app._router) return routes;   // Express 4 creates the router lazily
-
-    (function walk(stack, prefix, inheritedCodes) {
-        const active = [...inheritedCodes];
-        for (const layer of stack) {
-            if (layer.route) {
-                const routeCodes = layer.route.stack
-                    .filter(l => l.handle.permissionCodes)
-                    .flatMap(l => l.handle.permissionCodes);
-                for (const method of Object.keys(layer.route.methods)) {
-                    const verb = method === '_all' ? 'ALL' : method.toUpperCase();
-                    const path = prefix + (layer.route.path === '/' ? '' : layer.route.path);
-                    routes.set(`${verb} ${path}`, [...active, ...routeCodes]);
-                }
-            } else if (layer.name === 'router' && layer.handle.stack) {
-                walk(layer.handle.stack, prefix + mountPath(layer), active);
-            } else if (layer.handle.permissionCodes) {
-                // router.use(requirePermission(...)) — applies to the rest of
-                // this router's stack
-                active.push(...layer.handle.permissionCodes);
-            }
-        }
-    })(app._router.stack, '', []);
-    return routes;
+function collectApiRoutes(registry = sharedRegistry) {
+    return registry.all();
 }
 
 function sameCodes(a, b) {
@@ -66,13 +39,16 @@ function sameCodes(a, b) {
 }
 
 /**
- * @param {import('express').Express} app
- * @param {object} [overrides] - test seam: { routePerms, unguarded }
+ * @param {object} [overrides] - test seam: { routePerms, unguarded, registry }
  * @throws {Error} listing every mismatch found
  */
-function validateRouteGuards(app, { routePerms = ROUTE_PERMS, unguarded = UNGUARDED_ROUTES } = {}) {
+function validateRouteGuards({
+    routePerms = ROUTE_PERMS,
+    unguarded  = UNGUARDED_ROUTES,
+    registry   = sharedRegistry,
+} = {}) {
     const problems = [];
-    const actual   = collectApiRoutes(app);
+    const actual   = collectApiRoutes(registry);
     const unguardedSet = new Set(unguarded);
 
     for (const key of Object.keys(routePerms)) {

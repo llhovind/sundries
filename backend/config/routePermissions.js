@@ -198,7 +198,12 @@ function guard(endpointKey) {
             `No permission mapping for "${endpointKey}" — add it to config/routePermissions.js`
         );
     }
-    return requirePermission(...codes);
+    const middleware = requirePermission(...codes);
+    // The key this guard was looked up under. createApiRouter() checks it
+    // against the path the route is actually registered at, so a copy-pasted
+    // key can never leave an endpoint running another endpoint's permissions.
+    middleware.endpointKey = endpointKey;
+    return middleware;
 }
 
 module.exports = { ROUTE_PERMS, UNGUARDED_ROUTES, guard };
