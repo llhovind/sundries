@@ -1,18 +1,24 @@
 'use strict';
 
-const PgBoss = require('pg-boss');
-const { pgConfig, DB: db } = require('../common/db');
+const { getQueueProvider } = require('./queue');
+const { DB: db } = require('../common/db');
 const { log } = require('../common/logger');
 
 /**
- * Jobs — pg-boss-backed background work. Postgres is the queue, so small
- * installs need zero extra infrastructure.
+ * Jobs — the background work this shop does, and what runs it.
+ *
+ * This module owns the *domain* side of background work: which queues exist,
+ * what each one does, and how often. It owns no transport. Delivery belongs to
+ * a queue adapter behind services/queue (pg-boss by default, backed by
+ * Postgres, so small installs need zero extra infrastructure).
  *
  * Deployment modes:
  *   - inline (default): the API process runs the workers too — right for
  *     single-box shops. bin/www starts this unless JOBS_INLINE=false.
  *   - dedicated: run `npm run worker` on separate instances and set
  *     JOBS_INLINE=false on the API fleet — right for cloud scale.
+ *   - queue-less: QUEUE_PROVIDER=inline runs enqueued work on the caller's
+ *     stack and runs no scheduled work at all.
  *
  * Scheduled work:
  *   reservation-sweep    every minute — release expired holds, fail stale orders
@@ -29,9 +35,8 @@ const { log } = require('../common/logger');
  *   email        {event, order, to}   — order lifecycle mail through the mail port
  *   order-screen {ord_no}             — fraud velocity screening, post-placement
  *
- * Jobs.send falls back to executing the handler inline when the queue is not
- * running (JOBS_MODE=none, or before start) — a shop with no worker still
- * sends its emails, just synchronously.
+ * Jobs.send falls back to executing the handler inline when no durable queue
+ * is running — a shop with no worker still sends its emails, just synchronously.
  */
 const Jobs = (function () {
 
@@ -47,6 +52,39 @@ const Jobs = (function () {
         AUTH_PURGE:   'auth-token-purge',
         REPORT_REAP:  'report-run-reaper',
     };
+
+    const EVERY_MINUTE = '* * * * *';
+
+    /**
+     * Cron schedule per recurring queue. A queue absent here is on-demand:
+     * it exists, it has a worker, but nothing triggers it on a clock.
+     */
+    const SCHEDULES = {
+        [QUEUES.SWEEP]:       EVERY_MINUTE,
+        [QUEUES.RESTOCK]:     EVERY_MINUTE,
+        [QUEUES.OUTBOX]:      EVERY_MINUTE,
+        [QUEUES.PARTITION]:   '10 3 * * *',
+        [QUEUES.ROLLUP]:      '30 0 * * *',
+        [QUEUES.AUTH_PURGE]:  '40 3 * * *',
+        [QUEUES.REPORT_REAP]: '20 * * * *',
+    };
+
+    /**
+     * Retry policy for enqueued work. Applies to durable transports only —
+     * there is nothing to retry from when work runs on the caller's stack.
+     */
+    const RETRY_POLICY = Object.freeze({ retryLimit: 3, retryDelay: 30, retryBackoff: true });
+
+    /** Report runs are heavy and write to shared run rows — one at a time. */
+    const REPORT_MAX_BATCH = 1;
+
+    /** Days of sales re-rolled on each rollup; see the ROLLUP handler. */
+    const ROLLUP_LOOKBACK_DAYS = 3;
+
+    const MS_PER_DAY = 86400000;
+
+    /** Sentinel for 'partitioning disabled'; see the PARTITION handler. */
+    const PARTITIONS_DISABLED = -1;
 
     // Handlers are lazy-required to avoid circular imports (paymentsService
     // enqueues jobs; the sweep job calls paymentsService).
@@ -87,14 +125,14 @@ const Jobs = (function () {
             await ComplianceService.process(data.id);
         },
         [QUEUES.ROLLUP]: async () => {
-            // Re-roll the last 3 days so late payment webhooks and corrections
+            // Re-roll the last few days so late payment webhooks and corrections
             // are absorbed; the function is an idempotent recompute per day.
             const Reports = require('../models/reports');
-            for (let back = 0; back < 3; back++) {
-                const day = new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+            for (let back = 0; back < ROLLUP_LOOKBACK_DAYS; back++) {
+                const day = new Date(Date.now() - back * MS_PER_DAY).toISOString().slice(0, 10);
                 await Reports.rollupDay(day);
             }
-            log('info', 'daily sales rollup complete', { days: 3 });
+            log('info', 'daily sales rollup complete', { days: ROLLUP_LOOKBACK_DAYS });
         },
         [QUEUES.AUTH_PURGE]: async () => {
             const RefreshTokens = require('../models/refreshTokens');
@@ -108,95 +146,109 @@ const Jobs = (function () {
         },
         [QUEUES.PARTITION]: async () => {
             const Settings = require('../common/settings');
-            const months = await Settings.getNumber('inventory.partition_months', -1);
+            const months = await Settings.getNumber('inventory.partition_months', PARTITIONS_DISABLED);
             if (months < 0) return;   // scale-down mode: default partition only
             const res = await db.query('SELECT fn_ensure_inventory_partitions($1) AS created', [months]);
             if (res.rows[0].created) log('info', 'inventory partitions created', { created: res.rows[0].created });
         },
     };
 
-    let boss = null;
+    /** @type {import('./queue').QueueProvider|null} */
+    let driver = null;
 
-    return { QUEUES, start, stop, send, isRunning: () => boss !== null };
+    return { QUEUES, start, stop, send, isRunning: () => driver !== null && driver.isRunning() };
 
     /**
-     * Starts pg-boss, registers all workers, and installs the cron schedules.
+     * Assembles the full set of queues, their handlers and their schedules.
+     *
+     * @returns {import('./queue').Consumer[]}
      */
-    async function start() {
-        if (boss) return boss;
-        const instance = new PgBoss({
-            host:     pgConfig.host,
-            port:     pgConfig.port,
-            database: pgConfig.database,
-            user:     pgConfig.user,
-            password: pgConfig.password,
-            ssl:      pgConfig.ssl,
-            schema:   'pgboss',
-            max:      3,                       // its own small pool
-        });
-        instance.on('error', err => log('error', 'pg-boss error', { error: err.message }));
-        await instance.start();
+    function buildConsumers() {
+        const consumers = Object.values(QUEUES).map(queue => ({
+            queue,
+            handler:  HANDLERS[queue],
+            schedule: SCHEDULES[queue],
+        }));
 
-        for (const q of Object.values(QUEUES)) {
-            await instance.createQueue(q);
-            await instance.work(q, { batchSize: 5 }, async (jobs) => {
-                for (const job of jobs) {
-                    try {
-                        await HANDLERS[q](job.data || {});
-                    } catch (err) {
-                        log('error', 'job failed', { queue: q, jobId: job.id, error: err.message });
-                        throw err;             // let pg-boss apply retry/backoff
-                    }
-                }
-            });
-        }
-
-        await instance.schedule(QUEUES.SWEEP,     '* * * * *');
-        await instance.schedule(QUEUES.RESTOCK,   '* * * * *');
-        await instance.schedule(QUEUES.OUTBOX,    '* * * * *');
-        await instance.schedule(QUEUES.PARTITION, '10 3 * * *');
-        await instance.schedule(QUEUES.ROLLUP,    '30 0 * * *');
-        await instance.schedule(QUEUES.AUTH_PURGE, '40 3 * * *');
-        await instance.schedule(QUEUES.REPORT_REAP, '20 * * * *');
-
-        // Scheduled stored reports — one queue per report, discovered from
-        // the registry so adding a scheduled report never touches this file.
-        // Lazy-required like the handlers: the registry pulls in every
-        // report controller.
+        // Scheduled stored reports — one queue per report, discovered from the
+        // registry so adding a scheduled report never touches this file. Lazy-
+        // required like the handlers: the registry pulls in every report
+        // controller.
         const reportRegistry = require('./reporting/registry');
         const RunService     = require('./reporting/runService');
         for (const def of reportRegistry.scheduled()) {
-            const queue = `report-${def.slug}`;
-            await instance.createQueue(queue);
-            await instance.work(queue, { batchSize: 1 }, async () => {
-                await RunService.runScheduled(def.slug);
+            consumers.push({
+                queue:    `report-${def.slug}`,
+                handler:  () => RunService.runScheduled(def.slug),
+                schedule: def.schedule,
+                maxBatch: REPORT_MAX_BATCH,
             });
-            await instance.schedule(queue, def.schedule);
             log('info', 'scheduled report registered', { report: def.slug, cron: def.schedule });
         }
 
-        boss = instance;
-        log('info', 'job runner started', { queues: Object.values(QUEUES) });
-        return boss;
-    }
-
-    async function stop() {
-        if (!boss) return;
-        await boss.stop({ graceful: true });
-        boss = null;
+        return consumers;
     }
 
     /**
-     * Enqueue work. Falls back to inline execution when the queue is not
+     * Starts the configured queue transport and registers every consumer.
+     * Idempotent: a second call while running is a no-op.
+     */
+    async function start() {
+        if (driver && driver.isRunning()) return;
+
+        const provider = getQueueProvider();
+        const consumers = buildConsumers();
+        await provider.start(consumers);
+        driver = provider;
+
+        log('info', 'job runner started', {
+            provider: provider.provider,
+            queues:   consumers.map(c => c.queue),
+        });
+    }
+
+    async function stop() {
+        if (!driver) return;
+        await driver.stop();
+        driver = null;
+    }
+
+    /**
+     * Enqueue work. Falls back to inline execution when no durable queue is
      * running so no install silently drops work.
+     *
+     * @param {string} queue one of QUEUES
+     * @param {object} data  job payload; must survive a JSON round-trip
+     * @returns {Promise<string|null>} transport job id, or null when the work
+     *          ran inline
      */
     async function send(queue, data = {}) {
         if (!HANDLERS[queue]) throw new Error(`Unknown job queue: ${queue}`);
-        if (boss) {
-            return boss.send(queue, data, { retryLimit: 3, retryDelay: 30, retryBackoff: true });
+
+        if (driver && driver.isRunning()) {
+            // A durable transport owns the outcome from here: a send failure
+            // is a real infrastructure fault and belongs to the caller.
+            if (driver.durable) return driver.send(queue, data, RETRY_POLICY);
+            return tolerateFailure(() => driver.send(queue, data, RETRY_POLICY), queue);
         }
+        return tolerateFailure(() => HANDLERS[queue](data), queue);
+    }
+
+    /**
+     * Runs work on the caller's stack, logging rather than rethrowing.
+     *
+     * Deliberate: every Jobs.send caller is a request path — placing an order,
+     * shipping it — and none of them should fail because a confirmation email
+     * bounced. The cost is that with no durable queue behind it, failed work
+     * is lost after this log line.
+     *
+     * @param {() => Promise<unknown>} work
+     * @param {string} queue for the log record
+     * @returns {Promise<null>}
+     */
+    async function tolerateFailure(work, queue) {
         try {
-            await HANDLERS[queue](data);
+            await work();
         } catch (err) {
             log('error', 'inline job execution failed', { queue, error: err.message });
         }

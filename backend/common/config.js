@@ -12,6 +12,7 @@ require('dotenv').config();
 const MAIL_PROVIDERS    = ['smtp', 'ses', 'noop'];
 const PAYMENT_PROVIDERS = ['fake', 'stripe'];
 const IMAGE_PROVIDERS   = ['local', 's3'];
+const QUEUE_PROVIDERS   = ['pgboss', 'inline'];
 
 /** Bucket sub-path images are stored under; must match the CDN's /images route. */
 const DEFAULT_IMAGE_PREFIX = 'images';
@@ -105,6 +106,11 @@ function validate(env) {
     }
     if (env.IMAGE_PROVIDER && !IMAGE_PROVIDERS.includes(env.IMAGE_PROVIDER)) {
         problems.push(`IMAGE_PROVIDER must be one of [${IMAGE_PROVIDERS.join(', ')}], got '${env.IMAGE_PROVIDER}'`);
+    }
+    // A typo'd queue provider would otherwise surface as a shop that accepts
+    // orders and quietly never sweeps reservations or sends a single email.
+    if (env.QUEUE_PROVIDER && !QUEUE_PROVIDERS.includes(env.QUEUE_PROVIDER)) {
+        problems.push(`QUEUE_PROVIDER must be one of [${QUEUE_PROVIDERS.join(', ')}], got '${env.QUEUE_PROVIDER}'`);
     }
     // Caught here rather than as a broken <img> on the storefront: every image
     // URL the app hands out is built by joining this to a storage key.

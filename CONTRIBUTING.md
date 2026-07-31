@@ -28,6 +28,7 @@ Run them before opening a pull request:
 
 ```bash
 cd backend  && npm test              # Jest + Supertest against a real Postgres
+cd backend  && npm run test:queue    # node:test — pg-boss queue adapter contract
 cd frontend && npx vitest run        # component tests
 cd frontend && npm run build         # production build must succeed
 cd frontend && npx playwright test   # e2e; boots the API and Vite itself
@@ -35,6 +36,11 @@ cd frontend && npx playwright test   # e2e; boots the API and Vite itself
 
 The backend suite talks to the database named in your `.env` and leaves rows
 behind — point it at a scratch database, not one whose data you care about.
+
+`test:queue` is a separate runner on purpose: pg-boss is ESM-only and Jest's
+runtime cannot load it, so the Jest suites run on the `inline` queue adapter and
+the real transport is covered on `node:test`. If you touch `services/queue/`,
+run both — neither one alone tells you the port still works.
 
 There is deliberately no linter. Match the style of the file you're editing:
 4-space indent, `'use strict'` in backend modules, JSDoc on exported functions.

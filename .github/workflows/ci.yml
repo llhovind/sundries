@@ -80,6 +80,12 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Jest drives the inline queue adapter because its runtime cannot load
+      # pg-boss (ESM-only). This is the only place the real transport is
+      # exercised, so it is not optional — see tests/integration/.
+      - name: Run queue adapter contract tests
+        run: npm run test:queue
+
   frontend-unit:
     name: Frontend unit tests + build
     runs-on: ubuntu-latest

@@ -37,6 +37,11 @@ selling models: plain unit good, option-variant matrix, and goods sold by the fo
 * **Integrity lives in the database**: balance maintenance, FIFO costing,
   reservation math, oversell guards, and ledger immutability are triggers,
   functions, and CHECK constraints — safe under any number of API instances.
+* **The queue is built in**: background work runs on Postgres via pg-boss —
+  durable, retried and cron-scheduled, with no Redis or RabbitMQ to operate.
+  Like mail, search, payments and image storage it sits behind a port
+  (`QUEUE_PROVIDER`, §5), so the transport is replaceable without touching
+  domain code.
 * **Layering**: routes → controllers → services (domain logic) → models (all SQL).
 * `inventory_transactions` and `payment_events` are append-only; corrections are
   reversing entries. `audit_log` records privileged changes.
@@ -97,8 +102,8 @@ the codes the guards actually enforce.
 
 ### Prerequisites
 
-* Node.js 20.19+ or 22.12+ (backend needs 20+ for pg-boss v10; the frontend's
-  Vite 8 toolchain sets the tighter floor)
+* Node.js 22.12+ — pg-boss v12 is ESM-only and requires it, and the frontend's
+  Vite 8 toolchain wants the same floor
 * PostgreSQL 13+ (16 recommended — the version CI tests against) and somewhere
   for mail to land. Login is
   passwordless, so the very **first** sign-in needs a working mailbox. Both come
@@ -207,11 +212,19 @@ point a Stripe webhook at `POST /api/v1/payments/webhook/stripe`.
 
 ```bash
 cd backend  && npm test              # Jest — API + DB integration suites
+cd backend  && npm run test:queue    # node:test — pg-boss queue adapter contract
 cd frontend && npm run test:unit     # Vitest — component and config units
 cd frontend && npx playwright test   # Playwright — end-to-end, boots API + Vite itself
 ```
 
-All three run in CI on every push and pull request (`.github/workflows/ci.yml`).
+All four run in CI on every push and pull request (`.github/workflows/ci.yml`).
+
+`test:queue` is separate because pg-boss is ESM-only and Jest's runtime rewrites
+dynamic `import()` to `require()`, so it cannot load the package at all. The Jest
+suites therefore run on the `inline` queue adapter (work executes on the caller's
+stack), and the real transport — enqueue, worker pickup, retry-on-throw — is
+covered on `node:test`, which loads ESM natively. Both drive the same port, so
+neither is testing a mock of the other.
 
 The backend suites are integration-style: they exercise the real DB triggers, reservation
 functions, and the full route→controller→service path, so they need a **disposable**
@@ -274,7 +287,8 @@ Target: one app server + one DB server (or even one box), ~98% uptime, minimal m
    (reservation sweeper, backorder fulfillment + back-in-stock notifications,
    search indexing, emails, fraud screening, scheduled reports, daily sales
    rollup, partition and refresh-token maintenance) run inside the API
-   process via pg-boss by default:
+   process, queued and scheduled on the database you already have. There is
+   no broker to install here:
 
    ```cron
    # nightly logical backup at 02:15 (see §4)
@@ -395,6 +409,38 @@ Simple, provider-independent, restore-tested:
   `primary_image` keys, so a restore yields rows pointing at files that no longer
   exist and a catalog full of broken images.
 
+### Upgrading: pg-boss 10 → 12 requires resetting the queue schema
+
+**This one is not a restart-and-go.** pg-boss v10 owns schema version 24; v12
+migrates only from 25 and up, and no published release contains a 24 → 25 step
+(v11.0's migration table is empty, v11.1 starts at 25). There is therefore no
+in-place upgrade path, and pg-boss will refuse to start against a v10 schema:
+
+```
+Cannot migrate pg-boss schema from version 24: the oldest supported starting
+version is 25. Upgrade to a schema at or above that version using an older
+pg-boss release first.
+```
+
+The `pgboss` schema holds only queue state — never catalog, order, or ledger
+data — so recreating it is safe for the shop, but **anything still queued is
+discarded**. Drain first:
+
+```bash
+# 1. Stop everything that enqueues or works: API instances and `npm run worker`.
+# 2. Confirm nothing is left in flight — expect zero rows.
+psql "$DATABASE_URL" -c \
+  "SELECT state, count(*) FROM pgboss.job WHERE state IN ('created','active','retry') GROUP BY state;"
+# 3. Drop the queue schema. It is recreated automatically on next start.
+psql "$DATABASE_URL" -c "DROP SCHEMA pgboss CASCADE;"
+# 4. Deploy, then start the API (or worker) as usual.
+```
+
+If step 2 shows rows, let the workers finish before proceeding — those are
+unsent emails, unscreened orders and unswept reservations. Recurring work
+(sweeper, backorders, indexing) needs no rescue: schedules are reinstalled at
+startup and the next tick picks the work back up.
+
 ---
 
 ## 5. Configuration reference
@@ -415,6 +461,7 @@ problem reported at once):
 | `PAYMENT_PROVIDER` | `fake` (default — refused in production without `ALLOW_FAKE_PAYMENTS=true`) / `stripe` (requires `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`) |
 | `SEARCH_PROVIDER` | `postgres` (default) / `opensearch` (with `OPENSEARCH_URL`, `OPENSEARCH_INDEX`) |
 | `JOBS_INLINE` | `false` moves background jobs off the API onto `npm run worker` instances |
+| `QUEUE_PROVIDER` | `pgboss` (default — Postgres-backed, durable, retried, scheduled) / `inline` (runs enqueued work on the caller's stack and no scheduled work at all) |
 | `IMAGE_PROVIDER` | `local` (default — `backend/uploads/`, single instance only) / `s3` (requires `S3_BUCKET` + `IMAGE_PUBLIC_BASE_URL`, and `npm i @aws-sdk/client-s3`) |
 | `S3_PREFIX`, `IMAGE_PUBLIC_BASE_URL` | Bucket sub-path for images (default `images`) and the public base a stored key is joined onto to form its URL |
 | `ADMIN_EMAIL`, `ADMIN_USERNAME` | Initial admin created by `db/bootstrap.js` (OTP login, no password) |
