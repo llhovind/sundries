@@ -1,8 +1,8 @@
 'use strict';
 
 const config = require('../common/config');
-const express = require('express');
-const router  = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router  = createApiRouter('/api/v1/auth');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
 
@@ -16,6 +16,7 @@ const OtpCodes        = require('../models/otpCodes');
 const InvitationCodes = require('../models/invitationCodes');
 const mailer          = require('../common/mailer');
 const { log }         = require('../common/logger');
+const { isValidEmail } = require('../common/validation');
 
 // ---------------------------------------------------------------------------
 // Sentinel error — thrown inside a transaction to trigger rollback when an
@@ -32,7 +33,6 @@ class InvitationExhaustedError extends Error {
 // Renaming this logs out every existing session (the old cookie is no longer
 // read); users just re-authenticate via OTP.
 const COOKIE_NAME = 'refresh_token';
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const cookieOpts = {
     httpOnly: true,
@@ -113,7 +113,7 @@ router.post('/register', async (req, res) => {
     if (!email || !invitationCode) {
         return res.status(400).json({ message: 'email and invitationCode are required' });
     }
-    if (!EMAIL_REGEX.test(email)) {
+    if (!isValidEmail(email)) {
         return res.status(400).json({ message: 'Invalid email address' });
     }
 
@@ -206,7 +206,7 @@ router.post('/register', async (req, res) => {
 router.post('/request-otp', async (req, res) => {
     const { email } = req.body;
 
-    if (!email || !EMAIL_REGEX.test(email)) {
+    if (!isValidEmail(email)) {
         return res.status(400).json({ message: 'Valid email is required' });
     }
 

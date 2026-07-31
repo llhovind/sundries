@@ -52,11 +52,45 @@ you'd like credit, say so and you'll be named in the advisory.
   fork, `COOKIE_SECURE=false` in production, `TRUST_PROXY` left unset behind a
   proxy. Startup config validation catches much of this; the rest is on the
   operator.
+* **Untrusted content hosted on a sibling subdomain of the API.** CSRF defence
+  here rests on two things: every authenticated route takes its identity from an
+  `Authorization: Bearer` header rather than a cookie, and the one cookie that
+  exists — the `httpOnly` refresh token, scoped to `/api/v1/auth` — is
+  `SameSite=Strict`. `SameSite` is scoped to the registrable domain, not the
+  origin, so content served from a sibling subdomain (`blog.example.com` against
+  `api.example.com`) counts as same-site and *will* carry that cookie. The worst
+  reachable outcome is a forced logout; a forced refresh leaks nothing, because
+  the rotated cookie lands in the victim's own browser and the response body is
+  unreadable cross-origin. Do not host attacker-influenced content beside the
+  API. See [§ CSRF](#csrf) below.
 * The `fake` payment provider. It exists for local demos and refuses to start in
   production by design.
 * Known development-only dependency advisories (see below).
 
 ## Known accepted issues
+
+### CSRF
+
+CodeQL's `js/missing-token-validation` flags `cookieParser()` sitting in front
+of state-changing handlers, and the repository carries a dismissal for it. There
+is no CSRF token middleware, and that is deliberate — two properties make one
+redundant:
+
+* **Only two endpoints read a cookie at all**: `POST /api/v1/auth/refresh` and
+  `POST /api/v1/auth/logout`. Every other authenticated route derives identity
+  from an `Authorization: Bearer` header. A cross-origin form or image cannot set
+  that header, and `fetch` doing so triggers a preflight — which fails, since the
+  API mounts no CORS middleware. There is no ambient authority to abuse.
+* **The refresh cookie is `SameSite=Strict`**, `httpOnly`, and path-scoped to
+  `/api/v1/auth`, so browsers withhold it on cross-site requests entirely,
+  including top-level form POSTs.
+
+The residual same-site subdomain case is covered under **Out of scope** above.
+Reports that the API "has no CSRF tokens" will be closed against this section; a
+report showing a cookie-authenticated *state-changing* route, or a route that
+accepts credentials outside the `Authorization` header, is very much in scope.
+
+### Development-dependency advisories
 
 `npm audit` reports advisories against **development** dependencies —
 principally a `brace-expansion` denial-of-service reached through `jest`,

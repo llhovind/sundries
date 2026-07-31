@@ -1,7 +1,7 @@
 'use strict';
 
-const express           = require('express');
-const router            = express.Router();
+const { createApiRouter } = require('../common/apiRouter');
+const router            = createApiRouter('/api/v1/products');
 const { guard }         = require('../config/routePermissions');
 const { productImage }  = require('../middleware/imageUpload');
 const ProductsCntlr     = require('../controllers/ProductsCntlr')();

@@ -16,18 +16,24 @@ const AppSettings = (function () {
 
     // Domain guards per key. Anything not listed is protected by the type
     // check alone. Keep provider enums in sync with the adapter registries.
-    const KEY_RULES = {
-        'store.name':                 v => requireString(v, 'store.name'),
-        'store.currency':             v => requireString(v, 'store.currency',
-                                          { pattern: /^[A-Z]{3}$/, patternHint: 'must be a 3-letter ISO 4217 code (e.g. USD)' }),
-        'reservations.ttl_minutes':   v => requireNumber(v, 'reservations.ttl_minutes', { min: 1, integer: true }),
-        'inventory.partition_months': v => requireNumber(v, 'inventory.partition_months', { min: -1, integer: true }),
-        'returns.window_days':        v => requireNumber(v, 'returns.window_days', { integer: true }),
-        'shipping.free_threshold':    v => requireNumber(v, 'shipping.free_threshold', { min: 0 }),
-        'mail.provider':              v => oneOf(v, 'mail.provider',   ['smtp', 'ses', 'noop']),
-        'search.provider':            v => oneOf(v, 'search.provider', ['postgres', 'opensearch']),
-        'tax.provider':               v => oneOf(v, 'tax.provider',    ['local', 'stripe']),
-    };
+    //
+    // A Map, not an object literal: `key` arrives from the request, and a plain
+    // object would resolve 'constructor', '__proto__' and 'toString' to
+    // inherited callables. A Map has no prototype chain to walk, so an unknown
+    // key is simply absent — the lookup below is safe on its own terms rather
+    // than by leaning on the row-existence check in update().
+    const KEY_RULES = new Map([
+        ['store.name',                 v => requireString(v, 'store.name')],
+        ['store.currency',             v => requireString(v, 'store.currency',
+                                           { pattern: /^[A-Z]{3}$/, patternHint: 'must be a 3-letter ISO 4217 code (e.g. USD)' })],
+        ['reservations.ttl_minutes',   v => requireNumber(v, 'reservations.ttl_minutes', { min: 1, integer: true })],
+        ['inventory.partition_months', v => requireNumber(v, 'inventory.partition_months', { min: -1, integer: true })],
+        ['returns.window_days',        v => requireNumber(v, 'returns.window_days', { integer: true })],
+        ['shipping.free_threshold',    v => requireNumber(v, 'shipping.free_threshold', { min: 0 })],
+        ['mail.provider',              v => oneOf(v, 'mail.provider',   ['smtp', 'ses', 'noop'])],
+        ['search.provider',            v => oneOf(v, 'search.provider', ['postgres', 'opensearch'])],
+        ['tax.provider',               v => oneOf(v, 'tax.provider',    ['local', 'stripe'])],
+    ]);
 
     return { findAll, update };
 
@@ -49,7 +55,8 @@ const AppSettings = (function () {
         if (typeof value !== currentType) {
             throw badRequest(`${key} must be a ${currentType}`);
         }
-        const normalized = KEY_RULES[key] ? KEY_RULES[key](value) : value;
+        const rule = KEY_RULES.get(key);
+        const normalized = rule ? rule(value) : value;
 
         return withAudit(userId, (client) => client.query(
             `UPDATE app_settings

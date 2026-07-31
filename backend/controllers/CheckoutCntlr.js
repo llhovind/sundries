@@ -2,10 +2,9 @@
 
 const CheckoutService = require('../services/checkoutService');
 const PaymentsService = require('../services/paymentsService');
+const { isValidEmail } = require('../common/validation');
 
 const CheckoutCntlr = function () {
-
-    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     return { place, placeGuest, cancel };
 
@@ -25,7 +24,7 @@ const CheckoutCntlr = function () {
     // POST /api/v1/checkout/guest — guest checkout with inline items
     function placeGuest(req, res, next) {
         const { email, name, shipTo, items, backorders, notes, provider, promoCode } = req.body || {};
-        if (!email || !EMAIL_REGEX.test(email)) {
+        if (!isValidEmail(email)) {
             return next({ status: 400, message: 'A valid email is required' });
         }
         CheckoutService.placeGuest({ email, name, shipTo, items, backorders, notes, provider, promoCode })
